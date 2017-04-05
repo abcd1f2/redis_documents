@@ -252,8 +252,22 @@ sds sdsjoin(char **argv, int argc, char *sep);
 sds sdsjoinsds(sds *argv, int argc, const char *sep, size_t seplen);
 
 /* Low level functions exposed to the user API */
+/*
+    sdsMakeRoomFor:
+    扩容函数：（增加buf的free空间）：如果原来free足够用则直接返回。否则，如果buf->len+addlen 小于SDS_MAX_PREALLOC（1M），
+    则buf总空间扩为len+addlen的两倍；否则buf总空间扩为len+SDS_MAX_PREALLOC的两倍。 这也是sds由于char*的主要原因之一。
+    在sds追加内容的时候，按需要触发扩容操作，并预留free的剩余空间，这样在下次追加时当free足够大时就可以不用再次重新分配空间（realloc),
+    从而提高性能. 以空间换时间,类似于动态数组vector. 对于预留的空间,可用 sdsRemoveFreeSpace(sds s)函数释放归还.
+    然而free剩余空间的释放不是自动进行的，这可以通过设置系统，比如让系统定时自动释放掉free的剩余空间
+*/
 sds sdsMakeRoomFor(sds s, size_t addlen);
+
 void sdsIncrLen(sds s, int incr);
+
+/*
+    sdsRemoveFreeSpace:
+    去掉传入sds的free。 下次在该sds末尾追加时需要额外分配空间
+*/
 sds sdsRemoveFreeSpace(sds s);
 size_t sdsAllocSize(sds s);
 void *sdsAllocPtr(sds s);

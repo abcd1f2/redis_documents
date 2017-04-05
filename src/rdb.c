@@ -855,7 +855,12 @@ werr: /* Write error. */
     return C_ERR;
 }
 
-/* Save the DB on disk. Return C_ERR on error, C_OK on success. */
+/* 
+    Save the DB on disk. Return C_ERR on error, C_OK on success. 
+    将数据库保存到磁盘上
+    保存成功返回 REDIS_OK ，出错/失败返回 REDIS_ERR
+    SAVE:将阻塞主进程，知道写入磁盘完成 ： 创建临时文件，并初始化； 按RDB文件格式将服务器所有非空数据库数据写入文件；fsync到磁盘，用临时RDB文件代替原来文件；记录日志；更新服务器相关设置
+*/
 int rdbSave(char *filename) {
     char tmpfile[256];
     char cwd[MAXPATHLEN]; /* Current working dir path for error messages. */

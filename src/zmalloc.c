@@ -88,6 +88,29 @@ void zlibc_free(void *ptr) {
 
 #endif
 
+/*
+    此处有一个字节对其问题 同leveldb中比较：
+    char* Arena::AllocateAligned(size_t bytes)
+    {
+        const int align = (sizeof(void*) > 8) ? sizeof(void*) : 8;
+        assert((align & (align-1)) == 0);   // Pointer size should be a power of 2
+        size_t current_mod = reinterpret_cast<uintptr_t>(alloc_ptr_) & (align-1);
+        size_t slop = (current_mod == 0 ? 0 : align - current_mod);
+        size_t needed = bytes + slop;
+        
+        char* result;
+        if (needed <= alloc_bytes_remaining_) {
+        result = alloc_ptr_ + slop;
+        alloc_ptr_ += needed;
+        alloc_bytes_remaining_ -= needed;
+        } else {
+        // AllocateFallback always returned aligned memory
+        result = AllocateFallback(bytes);
+        }
+        assert((reinterpret_cast<uintptr_t>(result) & (align-1)) == 0);
+        return result;
+    }
+*/
 #define update_zmalloc_stat_alloc(__n) do { \
     size_t _n = (__n); \
     if (_n&(sizeof(long)-1)) _n += sizeof(long)-(_n&(sizeof(long)-1)); \
