@@ -2127,11 +2127,18 @@ struct redisCommand *lookupCommandOrOriginal(sds name) {
  * This should not be used inside commands implementation. Use instead
  * alsoPropagate(), preventCommandPropagation(), forceCommandPropagation().
  */
+
+/*
+    向 AOF 和从机发布数据更新
+*/
 void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc,
                int flags)
 {
+    // AOF 策略需要打开，且设置 AOF 传播标记，将更新发布给本地文件
     if (server.aof_state != AOF_OFF && flags & PROPAGATE_AOF)
         feedAppendOnlyFile(cmd,dbid,argv,argc);
+
+    // 设置了从机传播标记，将更新发布给从机
     if (flags & PROPAGATE_REPL)
         replicationFeedSlaves(server.slaves,dbid,argv,argc);
 }
@@ -2226,6 +2233,7 @@ void preventCommandReplication(client *c) {
  * preventCommandReplication(client *c);
  *
  */
+
 void call(client *c, int flags) {
     long long dirty, start, duration;
     int client_old_flags = c->flags;
@@ -2245,8 +2253,11 @@ void call(client *c, int flags) {
     redisOpArrayInit(&server.also_propagate);
 
     /* Call the command. */
+    // 脏数据标记，数据是否被修改
     dirty = server.dirty;
     start = ustime();
+    
+    // 执行命令对应的函数
     c->cmd->proc(c);
     duration = ustime()-start;
     dirty = server.dirty-dirty;
@@ -2280,6 +2291,7 @@ void call(client *c, int flags) {
         c->lastcmd->calls++;
     }
 
+    // 将客户端请求的数据修改记录传播给 AOF 和从机
     /* Propagate the command into the AOF and replication link */
     if (flags & CMD_CALL_PROPAGATE &&
         (c->flags & CLIENT_PREVENT_PROP) != CLIENT_PREVENT_PROP)
@@ -2288,11 +2300,15 @@ void call(client *c, int flags) {
 
         /* Check if the command operated changes in the data set. If so
          * set for replication / AOF propagation. */
+        // 数据被修改
         if (dirty) propagate_flags |= (PROPAGATE_AOF|PROPAGATE_REPL);
 
         /* If the client forced AOF / replication of the command, set
          * the flags regardless of the command effects on the data set. */
+        // 强制主从复制
         if (c->flags & CLIENT_FORCE_REPL) propagate_flags |= PROPAGATE_REPL;
+
+        // 强制 AOF 持久化
         if (c->flags & CLIENT_FORCE_AOF) propagate_flags |= PROPAGATE_AOF;
 
         /* However prevent AOF / replication propagation if the command
@@ -2307,6 +2323,7 @@ void call(client *c, int flags) {
 
         /* Call propagate() only if at least one of AOF / replication
          * propagation is needed. */
+        // 传播数据修改记录
         if (propagate_flags != PROPAGATE_NONE)
             propagate(c->cmd,c->db->id,c->argv,c->argc,propagate_flags);
     }

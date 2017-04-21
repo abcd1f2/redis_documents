@@ -859,16 +859,33 @@ struct redisServer {
     int syslog_enabled;             /* Is syslog enabled? */
     char *syslog_ident;             /* Syslog ident */
     int syslog_facility;            /* Syslog facility */
+    
     /* Replication (master) */
+    // 最近一次使用（访问）的数据集
     int slaveseldb;                 /* Last SELECTed DB in replication output */
+    
+    // 全局的数据同步偏移量
     long long master_repl_offset;   /* Global replication offset */
+    
+    // 主从连接心跳频率
     int repl_ping_slave_period;     /* Master pings the slave every N seconds */
+    
+    // 积压空间指针
     char *repl_backlog;             /* Replication backlog for partial syncs */
+    
+    // 积压空间大小
     long long repl_backlog_size;    /* Backlog circular buffer size */
+    
+    // 积压空间中写入的新数据的大小
     long long repl_backlog_histlen; /* Backlog actual data length */
+    
+    // 下一次向积压空间写入数据的起始位置
     long long repl_backlog_idx;     /* Backlog circular buffer current offset */
+    
+    // 积压数据的起始位置，是一个宏观值
     long long repl_backlog_off;     /* Replication offset of first byte in the
                                        backlog buffer. */
+    // 积压空间有效时间
     time_t repl_backlog_time_limit; /* Time without slaves after the backlog
                                        gets released. */
     time_t repl_no_slaves_since;    /* We have no slaves since that time.
@@ -878,6 +895,7 @@ struct redisServer {
     int repl_good_slaves_count;     /* Number of slaves with lag <= max_lag. */
     int repl_diskless_sync;         /* Send RDB to slaves sockets directly. */
     int repl_diskless_sync_delay;   /* Delay to start a diskless repl BGSAVE. */
+   
     /* Replication (slave) */
     char *masterauth;               /* AUTH with this password with master */
     char *masterhost;               /* Hostname of master */
@@ -903,6 +921,7 @@ struct redisServer {
     char *slave_announce_ip;        /* Give the master this ip address. */
     char repl_master_runid[CONFIG_RUN_ID_SIZE+1];  /* Master run id for PSYNC.*/
     long long repl_master_initial_offset;         /* Master PSYNC offset. */
+    
     /* Replication script cache. */
     dict *repl_scriptcache_dict;        /* SHA1 all slaves are aware of. */
     list *repl_scriptcache_fifo;        /* First in, first out LRU eviction. */

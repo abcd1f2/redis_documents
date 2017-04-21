@@ -123,6 +123,9 @@ void bioInit(void) {
     }
 }
 
+/*
+    创建BIO任务，插入bio_jobs，并调用pthread_cond_signal，通知进程解锁。
+*/
 void bioCreateBackgroundJob(int type, void *arg1, void *arg2, void *arg3) {
     struct bio_job *job = zmalloc(sizeof(*job));
 
@@ -137,6 +140,9 @@ void bioCreateBackgroundJob(int type, void *arg1, void *arg2, void *arg3) {
     pthread_mutex_unlock(&bio_mutex[type]);
 }
 
+/*
+    执行BIO任务线程。 线程中通过pthread管理进程锁，当bioCreateBackgroundJob执行pthread_cond_signal通知到该任务对应的线程时，从bio_jobs读出上一个任务，并执行
+*/
 void *bioProcessBackgroundJobs(void *arg) {
     struct bio_job *job;
     unsigned long type = (unsigned long) arg;

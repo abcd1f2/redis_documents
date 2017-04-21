@@ -753,11 +753,13 @@ void unlinkClient(client *c) {
      * If the client was already unlinked or if it's a "fake client" the
      * fd is already set to -1. */
     if (c->fd != -1) {
+        // 从客户端列表删除主机的信息
         /* Remove from the list of active clients. */
         ln = listSearchKey(server.clients,c);
         serverAssert(ln != NULL);
         listDelNode(server.clients,ln);
 
+        // 注销事件，关闭连接
         /* Unregister async I/O handlers and close the socket. */
         aeDeleteFileEvent(server.el,c->fd,AE_READABLE);
         aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);
@@ -791,6 +793,7 @@ void freeClient(client *c) {
      *
      * Note that before doing this we make sure that the client is not in
      * some unexpected state, by checking its flags. */
+    // 如果此机为从机，已经连接主机，可能需要保存主机状态信息，以便进行 PSYNC
     if (server.master && c->flags & CLIENT_MASTER) {
         serverLog(LL_WARNING,"Connection with master lost.");
         if (!(c->flags & (CLIENT_CLOSE_AFTER_REPLY|
