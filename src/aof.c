@@ -57,6 +57,23 @@ void aofClosePipes(void);
  * AOF_RW_BUF_BLOCK_SIZE bytes.
  * ------------------------------------------------------------------------- */
 
+/*
+    AOF 持久化
+    例子：
+        假设 redis 内存有「name:Jhon」的键值对，那么进行 AOF 持久化后，AOF 文件有如下内容：
+        所以对上面的内容进行恢复，能得到熟悉的一条 redis 命令：SELECT 8;SET name Jhon. 
+        可以想象的是，redis 遍历内存数据集中的每个 key-value 对，依次写入磁盘中；redis 启动的时候，从 AOF 文件中读取数据，恢复数据
+
+             --------rewriteAppendOnlyFile()------->
+    memory                                             disk
+             <-------loadAppendOnlyFile()-----------
+
+    与RDB的区别：
+        AOF 后台执行的方式和 RDB 有类似的地方，fork 一个子进程，主进程仍进行服务，子进程执行 AOF 持久化，
+        数据被 dump 到磁盘上。与 RDB 不同的是，后台子进程持久化过程中，主进程会记录期间的所有数据变更（主进程还在服务），
+        并存储在 server.aof_rewrite_buf_blocks 中；后台子进程结束后，redis 更新缓存追加到 AOF 文件中，是 RDB 持久化所不具备的
+
+*/
 #define AOF_RW_BUF_BLOCK_SIZE (1024*1024*10)    /* 10 MB per block */
 
 typedef struct aofrwblock {

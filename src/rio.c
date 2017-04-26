@@ -85,6 +85,7 @@ static int rioBufferFlush(rio *r) {
     return 1; /* Nothing to do, our write just appends to the buffer. */
 }
 
+// 适用于内存缓存
 static const rio rioBufferIO = {
     rioBufferRead,
     rioBufferWrite,
@@ -138,6 +139,7 @@ static int rioFileFlush(rio *r) {
     return (fflush(r->io.file.fp) == 0) ? 1 : 0;
 }
 
+// 适用于文件 IO
 static const rio rioFileIO = {
     rioFileRead,
     rioFileWrite,

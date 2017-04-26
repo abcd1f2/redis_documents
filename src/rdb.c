@@ -704,6 +704,7 @@ int rdbSaveKeyValuePair(rio *rdb, robj *key, robj *val,
                         long long expiretime, long long now)
 {
     /* Save the expire time */
+    // 过期时间
     if (expiretime != -1) {
         /* If this key is already expired skip it */
         if (expiretime < now) return 0;
@@ -712,8 +713,13 @@ int rdbSaveKeyValuePair(rio *rdb, robj *key, robj *val,
     }
 
     /* Save type, key, value */
+    // 数据类型
     if (rdbSaveObjectType(rdb,val) == -1) return -1;
+    
+    // 键
     if (rdbSaveStringObject(rdb,key) == -1) return -1;
+    
+    //值
     if (rdbSaveObject(rdb,val) == -1) return -1;
     return 1;
 }
@@ -758,7 +764,14 @@ int rdbSaveInfoAuxFields(rio *rdb) {
  *
  * When the function returns C_ERR and if 'error' is not NULL, the
  * integer pointed by 'error' is set to the value of errno just after the I/O
- * error. */
+ * error. 
+ */
+
+/*
+    RDB 的文件组织方式为：数据集序号1：操作码：数据1：结束码：校验和—-数据集序号2：操作码：数据2：结束码：校验和……
+    数据的组织方式为：过期时间：数据类型：键：值，即 TVL（type，length，value)
+*/
+
 int rdbSaveRio(rio *rdb, int *error) {
     dictIterator *di = NULL;
     dictEntry *de;
@@ -767,21 +780,32 @@ int rdbSaveRio(rio *rdb, int *error) {
     long long now = mstime();
     uint64_t cksum;
 
+    // 校验和
     if (server.rdb_checksum)
         rdb->update_cksum = rioGenericUpdateChecksum;
+
+    // 先写入版本号
     snprintf(magic,sizeof(magic),"REDIS%04d",RDB_VERSION);
     if (rdbWriteRaw(rdb,magic,9) == -1) goto werr;
     if (rdbSaveInfoAuxFields(rdb) == -1) goto werr;
 
     for (j = 0; j < server.dbnum; j++) {
+        // server 中保存的数据
         redisDb *db = server.db+j;
+        
+        // 字典
         dict *d = db->dict;
         if (dictSize(d) == 0) continue;
+        
+        // 字典迭代器
         di = dictGetSafeIterator(d);
         if (!di) return C_ERR;
 
         /* Write the SELECT DB opcode */
+        // 写入 RDB 操作码
         if (rdbSaveType(rdb,RDB_OPCODE_SELECTDB) == -1) goto werr;
+        
+        // 写入数据库序号
         if (rdbSaveLen(rdb,j) == -1) goto werr;
 
         /* Write the RESIZE DB opcode. We trim the size to UINT32_MAX, which
@@ -800,13 +824,19 @@ int rdbSaveRio(rio *rdb, int *error) {
         if (rdbSaveLen(rdb,expires_size) == -1) goto werr;
 
         /* Iterate this DB writing every entry */
+        // 写入数据库中每一个数据项
         while((de = dictNext(di)) != NULL) {
             sds keystr = dictGetKey(de);
             robj key, *o = dictGetVal(de);
             long long expire;
 
+            // 将 keystr 封装在 robj 里
             initStaticStringObject(key,keystr);
+            
+            // 获取过期时间
             expire = getExpire(db,&key);
+            
+            // 将key value 键值对 开始写入磁盘
             if (rdbSaveKeyValuePair(rdb,&key,o,expire,now) == -1) goto werr;
         }
         dictReleaseIterator(di);
@@ -814,10 +844,13 @@ int rdbSaveRio(rio *rdb, int *error) {
     di = NULL; /* So that we don't release it again on error. */
 
     /* EOF opcode */
+    // RDB 结束码
     if (rdbSaveType(rdb,RDB_OPCODE_EOF) == -1) goto werr;
 
     /* CRC64 checksum. It will be zero if checksum computation is disabled, the
-     * loading code skips the check in this case. */
+     * loading code skips the check in this case.
+     */
+    // 校验和
     cksum = rdb->cksum;
     memrev64ifbe(&cksum);
     if (rioWrite(rdb,&cksum,8) == 0) goto werr;
@@ -859,7 +892,12 @@ werr: /* Write error. */
     Save the DB on disk. Return C_ERR on error, C_OK on success. 
     将数据库保存到磁盘上
     保存成功返回 REDIS_OK ，出错/失败返回 REDIS_ERR
-    SAVE:将阻塞主进程，知道写入磁盘完成 ： 创建临时文件，并初始化； 按RDB文件格式将服务器所有非空数据库数据写入文件；fsync到磁盘，用临时RDB文件代替原来文件；记录日志；更新服务器相关设置
+    SAVE:将阻塞主进程，知道写入磁盘完成 ： 创建临时文件，并初始化； 按RDB文件格式将服务器所有非空数据库数据写入文件；
+    fsync到磁盘，用临时RDB文件代替原来文件；记录日志；更新服务器相关设置
+
+    如果采用 BGSAVE 策略，且内存中的数据集很大，fork() 会因为要为子进程产生一份虚拟空间表而花费较长的时间；
+    如果此时客户端请求数量非常大的话，会导致较多的写时拷贝操作；在 RDB 持久化操作过程中，每一个数据都会导致 write() 系统调用，
+    CPU 资源很紧张。因此，如果在一台物理机上部署多个 redis，应该避免同时持久化操作
 */
 int rdbSave(char *filename) {
     char tmpfile[256];
@@ -881,19 +919,25 @@ int rdbSave(char *filename) {
         return C_ERR;
     }
 
+    // 初始化 rdb 结构体。rdb 结构体内指定了读写文件的函数，已写/读字符统计等数据
     rioInitWithFile(&rdb,fp);
     if (rdbSaveRio(&rdb,&error) == C_ERR) {
         errno = error;
         goto werr;
     }
 
-    /* Make sure data will not remain on the OS's output buffers */
+    /* 
+    Make sure data will not remain on the OS's output buffers 
+    */
+    // 同步到磁盘
     if (fflush(fp) == EOF) goto werr;
     if (fsync(fileno(fp)) == -1) goto werr;
     if (fclose(fp) == EOF) goto werr;
 
     /* Use RENAME to make sure the DB file is changed atomically only
-     * if the generate DB file is ok. */
+     * if the generate DB file is ok. 
+     */
+    // 修改临时文件名为指定文件名
     if (rename(tmpfile,filename) == -1) {
         char *cwdp = getcwd(cwd,MAXPATHLEN);
         serverLog(LL_WARNING,
@@ -909,7 +953,11 @@ int rdbSave(char *filename) {
 
     serverLog(LL_NOTICE,"DB saved on disk");
     server.dirty = 0;
+
+    // 记录成功执行保存的时间
     server.lastsave = time(NULL);
+
+    // 记录执行的结果状态为成功
     server.lastbgsave_status = C_OK;
     return C_OK;
 
@@ -924,9 +972,13 @@ int rdbSaveBackground(char *filename) {
     pid_t childpid;
     long long start;
 
-    if (server.aof_child_pid != -1 || server.rdb_child_pid != -1) return C_ERR;
+    // 已经有后台程序了，拒绝再次执行
+    if (server.aof_child_pid != -1 || server.rdb_child_pid != -1) 
+        return C_ERR;
 
     server.dirty_before_bgsave = server.dirty;
+    
+    // 记录这次尝试执行持久化操作的时间
     server.lastbgsave_try = time(NULL);
 
     start = ustime();
@@ -934,32 +986,53 @@ int rdbSaveBackground(char *filename) {
         int retval;
 
         /* Child */
+        // 取消监听
         closeListeningSockets(0);
         redisSetProcTitle("redis-rdb-bgsave");
+        
+        // 执行备份主程序
         retval = rdbSave(filename);
         if (retval == C_OK) {
+            // 获取脏数据大小 估算使用虚拟内存大小
+            /*
+                那如何知道 BGSAVE 占用了多少内存？子进程在结束之前，读取了自身私有脏数据 Private_Dirty 的大小，
+                这样做是为了让用户看到 redis 的持久化进程所占用了有多少的空间。在父进程 fork 产生子进程过后，
+                父子进程虽然有不同的虚拟空间，但物理空间上是共存的，直至父进程或者子进程修改内存数据为止，
+                所以脏数据 Private_Dirty 可以近似的认为是子进程，即持久化进程占用的空间
+            */
             size_t private_dirty = zmalloc_get_private_dirty();
 
+            // 记录脏数据
             if (private_dirty) {
                 serverLog(LL_NOTICE,
                     "RDB: %zu MB of memory used by copy-on-write",
                     private_dirty/(1024*1024));
             }
         }
+        // 退出子进程
         exitFromChild((retval == C_OK) ? 0 : 1);
     } else {
         /* Parent */
+        // 计算 fork 消耗的时间  仅仅计算fork函数执行时间
         server.stat_fork_time = ustime()-start;
+
         server.stat_fork_rate = (double) zmalloc_used_memory() * 1000000 / server.stat_fork_time / (1024*1024*1024); /* GB per second. */
         latencyAddSampleIfNeeded("fork",server.stat_fork_time/1000);
+        
+        // fork 出错
         if (childpid == -1) {
+            // 记录执行的结果状态为失败
             server.lastbgsave_status = C_ERR;
             serverLog(LL_WARNING,"Can't save in background: fork: %s",
                 strerror(errno));
             return C_ERR;
         }
         serverLog(LL_NOTICE,"Background saving started by pid %d",childpid);
+        
+        // 记录保存的起始时间
         server.rdb_save_time_start = time(NULL);
+        
+        // 子进程 ID
         server.rdb_child_pid = childpid;
         server.rdb_child_type = RDB_CHILD_TYPE_DISK;
         updateDictResizePolicy();

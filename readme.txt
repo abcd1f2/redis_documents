@@ -1,216 +1,208 @@
 adlist.c
 adlist.h
-˫���������ݽṹ��ʵ��
+双端链表数据结构的实现
 
 ae.c
-ae.h��
-ae_epoll.c��
-ae_evport.c��
-ae_kqueue.c��
+ae.h、
+ae_epoll.c、
+ae_evport.c、
+ae_kqueue.c、
 ae_select.c
-�¼����������Լ���������ʵ��
+事件处理器，以及各个具体实现
 
-anet.c �� 
+anet.c 、
 anet.h
-Redis���첽�����ܣ�������ҪΪ��socket��İ�װ
+Redis的异步网络框架，内容主要为对socket库的包装
 
 aof.c
-AOF���ܵ�ʵ��
+AOF功能的实现
 
 asciilogo.h
-������Redis��ASCII LOGO
+保存了Redis的ASCII LOGO
 
-bio.c �� 
+bio.c 、
 bio.h
-Redis�ĺ�̨ I/O �������ڽ� I/O �����ŵ����߳�����ִ�У� ���� I/O ���������̵߳�����
+Redis的后台 I/O 程序，用于将 I/O 操作放到子线程里面执行， 减少 I/O 操作对主线程的阻塞
 
 bitops.c
-������λ���������ʵ���ļ�
+二进制位操作命令的实现文件
 
 blocked.c
-����ʵ�� BLPOP ����� WAIT ���������Ч��
+用于实现 BLPOP 命令和 WAIT 命令的阻塞效果
 
-cluster.c��
+cluster.c、
 cluster.h
-Redis �ļ�Ⱥʵ��
+Redis 的集群实现
 
-config.c��
+config.c、
 config.h
-Redis �����ù���ʵ�֣������ȡ�����������ļ��� Ȼ�������Щ�����޸� Redis �������ĸ���ѡ��
+Redis 的配置管理实现，负责读取并分析配置文件， 然后根据这些配置修改 Redis 服务器的各个选项
 
-crc16.c��
-crc64.c��
+crc16.c、
+crc64.c、
 crc64.h
-���� CRC У���
+计算 CRC 校验和
 
 db.c
-���ݿ�ʵ��
+数据库实现
 
 debug.c
-����ʵ��
+调试实现
 
-dict.c��
+dict.c、
 dict.h
-�ֵ����ݽṹ��ʵ��
+字典数据结构的实现
 
-endianconv.c��
+endianconv.c、
 endianconv.h
-�����ƵĴ�ˡ�С��ת������
+二进制的大端、小端转换函数
 
 fmacros.h
-һЩ��ֲ�Է���ĺ�
+一些移植性方面的宏
 
 help.h
-utils/generate-command-help.rb �����Զ����ɵ����������Ϣ
+utils/generate-command-help.rb 程序自动生成的命令帮助信息
 
 hyperloglog.c
-HyperLogLog ���ݽṹ��ʵ��
+HyperLogLog 数据结构的实现
 
-intset.c��
+intset.c、
 intset.h
-�����������ݽṹ��ʵ�֣������Ż� SET ����
+整数集合数据结构的实现，用于优化 SET 类型
 
-lzf_c.c �� 
-lzf_d.c �� 
-lzf.h �� 
+lzf_c.c 、
+lzf_d.c 、
+lzf.h 、
 lzfP.h
-Redis ���ַ����� RDB �ļ�����ѹ��ʱʹ�õ� LZF ѹ���㷨��ʵ��
+Redis 对字符串和 RDB 文件进行压缩时使用的 LZF 压缩算法的实现
 
-Makefile �� Makefile.dep
-�����ļ�
+Makefile 、 Makefile.dep
+构建文件
 
 memtest.c
-�ڴ����
+内存测试
 
 mkreleasehdr.sh
-���������ͳ���Ϣ�Ľű�
+用于生成释出信息的脚本
 
 multi.c
-Redis ������ʵ��
+Redis 的事务实现
 
 networking.c
-Redis �Ŀͻ�����������⣬ ����ʵ������������ա���������ظ��ȹ����� �ļ��еĺ������Ϊ write �� read �� close �Ⱥ����İ�װ�� �Լ�����Э��ķ����͹���������
+Redis 的客户端网络操作库， 用于实现命令请求接收、发送命令回复等工作， 文件中的函数大多为 write 、 read 、 close 等函数的包装， 以及各种协议的分析和构建函数。
 
 notify.c
-Redis �����ݿ�֪ͨʵ�֡�
+Redis 的数据库通知实现。
 
 object.c
-Redis �Ķ���ϵͳʵ�֡�
+Redis 的对象系统实现。
 
-pqsort.c �� pqsort.h
-��������QuickSort���㷨��ʵ�֡�
+pqsort.c 、
+pqsort.h
+快速排序（QuickSort）算法的实现。
 
 pubsub.c
-�����붩�Ĺ��ܵ�ʵ�֡�
+发布与订阅功能的实现。
 
-rand.c �� rand.h
-α�������������
+rand.c 、
+rand.h
+伪随机数生成器。
 
-rdb.c �� rdb.h
-RDB �־û����ܵ�ʵ�֡�
+rdb.c 、
+rdb.h
+RDB 持久化功能的实现。
 
 redisassert.h
-Redis �Խ��Ķ���ϵͳ��
+Redis 自建的断言系统。
 
 redis-benchmark.c
-Redis �����ܲ��Գ���
+Redis 的性能测试程序。
 
 redis.c
-�����������������ά���͹رյ����
+负责服务器的启动、维护和关闭等事项。
 
-redis-check-aof.c �� 
+redis-check-aof.c 、
 redis-check-dump.c
-RDB �ļ��� AOF �ļ��ĺϷ��Լ�����
+RDB 文件和 AOF 文件的合法性检查程序。
 
 redis-cli.c
-Redis �ͻ��˵�ʵ�֡�
+Redis 客户端的实现。
 
 redis.h
-Redis ����Ҫͷ�ļ�����¼�� Redis �еĴ󲿷����ݽṹ�� ����������״̬�Ϳͻ���״̬��
+Redis 的主要头文件，记录了 Redis 中的大部分数据结构， 包括服务器状态和客户端状态。
 
 redis-trib.rb
-Redis ��Ⱥ�Ĺ�������
+Redis 集群的管理程序。
 
-release.c ��
+release.c 、
 release.h
-��¼������ Redis ���ͳ��汾��Ϣ��
+记录和生成 Redis 的释出版本信息。
 
 replication.c
-���ƹ��ܵ�ʵ�֡�
+复制功能的实现。
 
-rio.c ��
+rio.c 、
 rio.h
-Redis ���ļ� I/O �����İ�װ�� ����ͨ I/O �����Ļ�������������ʽ���桢�Լ�����У��͵ȹ��ܡ�
+Redis 对文件 I/O 函数的包装， 在普通 I/O 函数的基础上增加了显式缓存、以及计算校验和等功能。
 
 scripting.c
-�ű����ܵ�ʵ�֡�
+脚本功能的实现。
 
-sds.c �� 
+sds.c 、
 sds.h
-SDS ���ݽṹ��ʵ�֣�SDS Ϊ Redis ��Ĭ���ַ�����ʾ��
+SDS 数据结构的实现，SDS 为 Redis 的默认字符串表示。
 
 sentinel.c
-Redis Sentinel ��ʵ�֡�
+Redis Sentinel 的实现。
 
 setproctitle.c
-���̻������ú�����
+进程环境设置函数。
 
-sha1.c ��
+sha1.c 、
 sha1.h
-SHA1 У��ͼ��㺯����
+SHA1 校验和计算函数。
 
-slowlog.c �� 
+slowlog.c 、
 slowlog.h
-����ѯ���ܵ�ʵ�֡�
+慢查询功能的实现。
 
 solarisfixes.h
-��� Solaris ϵͳ�Ĳ�����
+针对 Solaris 系统的补丁。
 
 sort.c
-SORT �����ʵ�֡�
+SORT 命令的实现。
 
 syncio.c
-ͬ�� I/O ������
+同步 I/O 操作。
 
 testhelp.h
-���Ը����ꡣ
+测试辅助宏。
 
-t_hash.c �� 
-t_list.c ��
-t_set.c  
-t_string.c �� 
+t_hash.c 、
+t_list.c 、
+t_set.c
+t_string.c 、
 t_zset.c
-������ Redis �ĸ����������ͣ��Լ���Щ�������͵����
+定义了 Redis 的各种数据类型，以及这些数据类型的命令。
 
-util.c �� 
+util.c 、
 util.h
-���ָ���������
+各种辅助函数。
 
 valgrind.sup
-valgrind ��suppression�ļ���
+valgrind 的suppression文件。
 
 version.h
-��¼�� Redis �İ汾�š�
+记录了 Redis 的版本号。
 
-ziplist.c �� 
+ziplist.c 、
 ziplist.h
-ZIPLIST ���ݽṹ��ʵ�֣������Ż� LIST ���͡�
+ZIPLIST 数据结构的实现，用于优化 LIST 类型。
 
-zipmap.c ��
+zipmap.c 、
 zipmap.h
-ZIPMAP ���ݽṹ��ʵ�֣��� Redis 2.6 ��ǰ�����Ż� HASH ���ͣ� Redis 2.6 ��ʼ�Ѿ�������
+ZIPMAP 数据结构的实现，在 Redis 2.6 以前用与优化 HASH 类型， Redis 2.6 开始已经废弃。
 
-zmalloc.c �� 
+zmalloc.c 、
 zmalloc.h
-�ڴ��������
-
-
-
-
-
-
-
-
-
-
-
+内存管理程序。
