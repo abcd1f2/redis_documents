@@ -64,20 +64,32 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
 
+    // 分配空间
     if ((eventLoop = zmalloc(sizeof(*eventLoop))) == NULL) goto err;
+    
+    // 分配文件事件结构体空间
     eventLoop->events = zmalloc(sizeof(aeFileEvent)*setsize);
+    
+    //分配已触发事件结构体空间
     eventLoop->fired = zmalloc(sizeof(aeFiredEvent)*setsize);
     if (eventLoop->events == NULL || eventLoop->fired == NULL) goto err;
     eventLoop->setsize = setsize;
     eventLoop->lastTime = time(NULL);
+    
+    // 时间事件链表头
     eventLoop->timeEventHead = NULL;
     eventLoop->timeEventNextId = 0;
     eventLoop->stop = 0;
     eventLoop->maxfd = -1;
+    
+    // 进入事件循环前需要执行的操作，此项会在 redis main() 函数中设置
     eventLoop->beforesleep = NULL;
+    
+    // 在这里，aeApiCreate() 函数对于每个 IO 多路复用模型的实现都有不同，具体参见源代码，因为每种 IO 多路复用模型的初始化都不同
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it. */
+    // 初始化事件类型掩码为无事件状态
     for (i = 0; i < setsize; i++)
         eventLoop->events[i].mask = AE_NONE;
     return eventLoop;
@@ -139,11 +151,18 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         errno = ERANGE;
         return AE_ERR;
     }
+
+    // 在 I/O 事件表中选择一个空间
     aeFileEvent *fe = &eventLoop->events[fd];
 
+    // aeApiAddEvent() 只在此函数中调用，对于不同 IO 多路复用实现，会有所不同
+    // epoll 下调用 epoll_ctl EPOLL_CTL_ADD
     if (aeApiAddEvent(eventLoop, fd, mask) == -1)
         return AE_ERR;
+    
     fe->mask |= mask;
+
+    // 设置回调函数
     if (mask & AE_READABLE) fe->rfileProc = proc;
     if (mask & AE_WRITABLE) fe->wfileProc = proc;
     fe->clientData = clientData;
@@ -200,6 +219,12 @@ static void aeAddMillisecondsToNow(long long milliseconds, long *sec, long *ms) 
     *ms = when_ms;
 }
 
+/*    
+    自增timeEventNextId 会在处理执行定时事件时会用到，用于防止出现死循环。
+    如果超过了最大 id，则跳过这个定时事件，为的是避免死循环，即：
+    如果事件一执行的时候注册了事件二，事件一执行完毕后事件二得到执行，紧接着如果事件一有得到执行就会成为循环，因此维护了 timeEventNextId 。
+*/
+
 long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
         aeTimeProc *proc, void *clientData,
         aeEventFinalizerProc *finalizerProc)
@@ -207,13 +232,20 @@ long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
     long long id = eventLoop->timeEventNextId++;
     aeTimeEvent *te;
 
+    // 分配空间
     te = zmalloc(sizeof(*te));
     if (te == NULL) return AE_ERR;
+    
+    // 填充时间事件结构体
     te->id = id;
+
+    // 计算超时时间
     aeAddMillisecondsToNow(milliseconds,&te->when_sec,&te->when_ms);
     te->timeProc = proc;
     te->finalizerProc = finalizerProc;
     te->clientData = clientData;
+    
+    // 头插法
     te->next = eventLoop->timeEventHead;
     eventLoop->timeEventHead = te;
     return id;
@@ -345,7 +377,15 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  * if flags has AE_DONT_WAIT set the function returns ASAP until all
  * the events that's possible to process without to wait are processed.
  *
- * The function returns the number of events processed. */
+ * The function returns the number of events processed. 
+ */
+
+/*
+    1、首先找到定时的最短时间
+    2、根据最短时间设置IO多路的最大超时时间
+    3、处理超时事件
+*/
+
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
     int processed = 0, numevents;
@@ -361,10 +401,15 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
         int j;
         aeTimeEvent *shortest = NULL;
+        
+        // tvp 会在 IO 多路复用的函数调用中用到，表示超时时间
         struct timeval tv, *tvp;
 
+        // 得到最短将来会发生的定时事件
         if (flags & AE_TIME_EVENTS && !(flags & AE_DONT_WAIT))
             shortest = aeSearchNearestTimer(eventLoop);
+
+        // 计算睡眠的最短时间
         if (shortest) {
             long now_sec, now_ms;
 
@@ -377,17 +422,21 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
                 (shortest->when_sec - now_sec)*1000 +
                 shortest->when_ms - now_ms;
 
-            if (ms > 0) {
+            if (ms > 0) { 
                 tvp->tv_sec = ms/1000;
                 tvp->tv_usec = (ms % 1000)*1000;
             } else {
+
+                // 当前系统时间已经超过定时事件设定的时间
                 tvp->tv_sec = 0;
                 tvp->tv_usec = 0;
             }
         } else {
             /* If we have to check for events but need to return
              * ASAP because of AE_DONT_WAIT we need to set the timeout
-             * to zero */
+             * to zero 
+             */
+            // 如果没有定时事件，见机行事
             if (flags & AE_DONT_WAIT) {
                 tv.tv_sec = tv.tv_usec = 0;
                 tvp = &tv;

@@ -73,6 +73,8 @@ client *createClient(int fd) {
         anetEnableTcpNoDelay(NULL,fd);
         if (server.tcpkeepalive)
             anetKeepAlive(NULL,fd,server.tcpkeepalive);
+        
+        //增加读事件和回调函数
         if (aeCreateFileEvent(server.el,fd,AE_READABLE,
             readQueryFromClient, c) == AE_ERR)
         {
@@ -615,6 +617,7 @@ int clientHasPendingReplies(client *c) {
 #define MAX_ACCEPTS_PER_CALL 1000
 static void acceptCommonHandler(int fd, int flags, char *ip) {
     client *c;
+    //创建客户端并加入到IO多路复用的监听队列中
     if ((c = createClient(fd)) == NULL) {
         serverLog(LL_WARNING,
             "Error registering fd event for the new client: %s (fd=%d)",
@@ -1284,9 +1287,18 @@ void processInputBuffer(client *c) {
             }
         }
 
+        //执行不同的协议
+        //inline协议是老协议，现在一般只在命令行下的redis客户端使用
         if (c->reqtype == PROTO_REQ_INLINE) {
             if (processInlineBuffer(c) != C_OK) break;
         } else if (c->reqtype == PROTO_REQ_MULTIBULK) {
+            //其他情况下使用
+            /*
+                如果客户端传送的数据的第一个字符是‘*’，那么传送数据将被当做multibulk协议处理，
+                否则将被当做inline协议处理。Inline协议的具体解析函数是processInlineBuffer()，
+                multibulk协议的具体解析函数是processMultibulkBuffer()。 当协议解析完毕，
+                即客户端传送的数据已经解析出命令字段和参数字段，接下来进行命令处理，命令处理函数是processCommand
+            */
             if (processMultibulkBuffer(c) != C_OK) break;
         } else {
             serverPanic("Unknown request type");
@@ -1334,6 +1346,10 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     c->querybuf = sdsMakeRoomFor(c->querybuf, readlen);
     nread = read(fd, c->querybuf+qblen, readlen);
     if (nread == -1) {
+        /*
+            被系统中断(nwritten == -1 && errno == EAGAIN)
+            读数据出错(nwritten == -1 && errno != EAGAIN)，释放客户端freeClient()
+        */
         if (errno == EAGAIN) {
             return;
         } else {
