@@ -460,11 +460,24 @@ typedef long long mstime_t; /* millisecond time type. */
 #define LRU_BITS 24
 #define LRU_CLOCK_MAX ((1<<LRU_BITS)-1) /* Max value of obj->lru */
 #define LRU_CLOCK_RESOLUTION 1000 /* LRU clock resolution in ms */
+
+//任何 value 都会被包装成一个 redisObject，redisObject 能指定 value 的类型，编码方式等数据属性
 typedef struct redisObject {
+    // 刚刚好 32 bits
+    // 对象的类型，字符串/列表/集合/哈希表
     unsigned type:4;
+
+    // 编码的方式，redis 为了节省空间，提供多种方式来保存一个数据
+    // 譬如：“123456789” 会被存储为整数 123456789
     unsigned encoding:4;
+    
+    // 当内存紧张，淘汰数据的时候用到
     unsigned lru:LRU_BITS; /* lru time (relative to server.lruclock) */
+    
+    // 引用计数
     int refcount;
+    
+    // 数据指针
     void *ptr;
 } robj;
 
@@ -513,15 +526,31 @@ typedef struct redisDb {
 } redisDb;
 
 /* Client MULTI/EXEC state */
+
+/*
+    命令结构体，命令队列专用
+*/
 typedef struct multiCmd {
+    // 命令参数
     robj **argv;
+
+    // 参数个数
     int argc;
+
+    // 命令结构体，包含了与命令相关的参数，譬如命令执行函数
+    // 如需更详细了解，参看 redis.c 中的 redisCommandTable 全局参数
     struct redisCommand *cmd;
 } multiCmd;
 
+// 命令队列结构体
 typedef struct multiState {
+    // 命令队列        
     multiCmd *commands;     /* Array of MULTI commands */
+    
+    // 命令的个数
     int count;              /* Total number of MULTI commands */
+    
+    // 以下两个参数暂时没有用到，和主从复制有关
     int minreplicas;        /* MINREPLICAS for synchronous replication */
     time_t minreplicas_timeout; /* MINREPLICAS timeout as unixtime. */
 } multiState;
@@ -652,8 +681,12 @@ typedef struct zskiplist {
     int level;
 } zskiplist;
 
+//是一个跳表，插入删除速度非常快。
 typedef struct zset {
+    // 哈希表
     dict *dict;
+    
+    // 跳表
     zskiplist *zsl;
 } zset;
 

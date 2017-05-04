@@ -2536,13 +2536,17 @@ int processCommand(client *c) {
     }
 
     /* Exec the command */
+    // 加入命令队列的情况
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
     {
+        // 命令入队
         queueMultiCommand(c);
         addReply(c,shared.queued);
     } else {
+        // 真正执行命令。
+        // 注意，如果是设置了多命令模式，那么不是直接执行命令，而是让命令入队
         call(c,CMD_CALL_FULL);
         c->woff = server.master_repl_offset;
         if (listLength(server.ready_keys))

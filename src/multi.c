@@ -31,6 +31,29 @@
 
 /* ================================ MULTI/EXEC ============================== */
 
+/*
+    MULTI，EXEC，DISCARD，WATCH 四个命令是 redis 事务的四个基础命令。其中：
+        MULTI，告诉 redis 服务器开启一个事务。注意，只是开启，而不是执行
+        EXEC，告诉 redis 开始执行事务
+        DISCARD，告诉 redis 取消事务
+        WATCH，监视某一个键值对，它的作用是在事务执行之前如果监视的键值被修改，事务会被取消。
+  
+    内部实现不难：redis 服务器收到来自客户端的 MULTI 命令后，为客户端保存一个命令队列结构体，直到收到 EXEC 后才开始执行命令队列中的命令
+
+    redis 的官方文档上说，WATCH 命令是为了让 redis 拥有 check-and-set(CAS)的特性。CAS 的意思是，一个客户端在修改某个值之前，要检测它是否更改；如果没有更改，修改操作才能成功。
+    redis 数据集结构体 redisDB 和客户端结构体 redisClient 都会保存键值监视的相关数据
+
+    当客户端键值的键值被修改的时候，监视该键值的所有客户端都会被标记为 REDIS_DIRTY_CAS，表示此该键值对被修改过
+
+    redis 事务的执行与取消：
+        当用户发出 EXEC 的时候，在它 MULTI 命令之后提交的所有命令都会被执行。从代码的实现来看，如果客户端监视的数据被修改，
+        它会被标记 REDIS_DIRTY_CAS，会调用 discardTransaction() 从而取消该事务。特别的，用户开启一个事务后会提交多个命令，
+        如果命令在入队过程中出现错误，譬如提交的命令本身不存在，参数错误和内存超额等，都会导致客户端被标记 REDIS_DIRTY_EXEC，被标记 REDIS_DIRTY_EXEC 会导致事务被取消。
+    因此总结一下：
+        REDIS_DIRTY_CAS 更改的时候会设置此标记
+        REDIS_DIRTY_EXEC 命令入队时出现错误，此标记会导致 EXEC 命令执行失败
+*/
+
 /* Client state initialization for MULTI/EXEC */
 void initClientMultiState(client *c) {
     c->mstate.commands = NULL;
@@ -69,9 +92,16 @@ void queueMultiCommand(client *c) {
     c->mstate.count++;
 }
 
+//被监视的键值被修改或者命令入队出错都会导致事务被取消
+//取消事务
 void discardTransaction(client *c) {
+    // 清空命令队列
     freeClientMultiState(c);
+
+    // 初始化命令队列
     initClientMultiState(c);
+
+    // 取消标记 flag
     c->flags &= ~(CLIENT_MULTI|CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC);
     unwatchAllKeys(c);
 }
@@ -111,6 +141,7 @@ void execCommandPropagateMulti(client *c) {
     decrRefCount(multistring);
 }
 
+// 执行事务内的所有命令
 void execCommand(client *c) {
     int j;
     robj **orig_argv;
@@ -118,6 +149,7 @@ void execCommand(client *c) {
     struct redisCommand *orig_cmd;
     int must_propagate = 0; /* Need to propagate MULTI/EXEC to AOF / slaves? */
 
+    // 必须设置多命令标记
     if (!(c->flags & CLIENT_MULTI)) {
         addReplyError(c,"EXEC without MULTI");
         return;
@@ -128,7 +160,14 @@ void execCommand(client *c) {
      * 2) There was a previous error while queueing commands.
      * A failed EXEC in the first case returns a multi bulk nil object
      * (technically it is not an error but a special behavior), while
-     * in the second an EXECABORT error is returned. */
+     * in the second an EXECABORT error is returned. 
+     */
+    /* 
+        停止执行事务命令的情况：
+            1. 被监视的数据被修改
+            2. 命令队列中的命令执行失败
+    */
+
     if (c->flags & (CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC)) {
         addReply(c, c->flags & CLIENT_DIRTY_EXEC ? shared.execaborterr :
                                                   shared.nullmultibulk);
@@ -137,12 +176,18 @@ void execCommand(client *c) {
     }
 
     /* Exec all the queued commands */
+    // 执行队列中的所有命令
     unwatchAllKeys(c); /* Unwatch ASAP otherwise we'll waste CPU cycles */
+    
+    // 保存当前的命令，一般为 MULTI，在执行完所有的命令后会恢复。
     orig_argv = c->argv;
     orig_argc = c->argc;
     orig_cmd = c->cmd;
+
     addReplyMultiBulkLen(c,c->mstate.count);
+    
     for (j = 0; j < c->mstate.count; j++) {
+        // 命令队列中的命令被赋值给当前的命令
         c->argc = c->mstate.commands[j].argc;
         c->argv = c->mstate.commands[j].argv;
         c->cmd = c->mstate.commands[j].cmd;
@@ -151,11 +196,13 @@ void execCommand(client *c) {
          * This way we'll deliver the MULTI/..../EXEC block as a whole and
          * both the AOF and the replication link will have the same consistency
          * and atomicity guarantees. */
+        // 遇到包含写操作的命令需要将 MULTI 命令写入 AOF 文件
         if (!must_propagate && !(c->cmd->flags & CMD_READONLY)) {
             execCommandPropagateMulti(c);
             must_propagate = 1;
         }
 
+        // 调用 call() 执行
         call(c,CMD_CALL_FULL);
 
         /* Commands may alter argc/argv, restore mstate. */
@@ -163,9 +210,13 @@ void execCommand(client *c) {
         c->mstate.commands[j].argv = c->argv;
         c->mstate.commands[j].cmd = c->cmd;
     }
+
+    // 恢复当前的命令，一般为 MULTI
     c->argv = orig_argv;
     c->argc = orig_argc;
     c->cmd = orig_cmd;
+
+    // 事务已经执行完毕，清理与此事务相关的信息，如命令队列和客户端标记
     discardTransaction(c);
     /* Make sure the EXEC command will be propagated as well if MULTI
      * was already propagated. */
@@ -199,6 +250,7 @@ typedef struct watchedKey {
 } watchedKey;
 
 /* Watch for the specified key */
+// 监视键值函数
 void watchForKey(client *c, robj *key) {
     list *clients = NULL;
     listIter li;
@@ -206,21 +258,28 @@ void watchForKey(client *c, robj *key) {
     watchedKey *wk;
 
     /* Check if we are already watching for this key */
+    // 是否已经监视该键值
     listRewind(c->watched_keys,&li);
     while((ln = listNext(&li))) {
         wk = listNodeValue(ln);
         if (wk->db == c->db && equalStringObjects(key,wk->key))
             return; /* Key already watched */
     }
+
     /* This key is not already watched in this DB. Let's add it */
+    // 获取监视该键值的客户端链表
     clients = dictFetchValue(c->db->watched_keys,key);
+    // 如果不存在链表，需要新建一个
     if (!clients) {
         clients = listCreate();
         dictAdd(c->db->watched_keys,key,clients);
         incrRefCount(key);
     }
+    // 尾插法。将客户端添加到链表尾部
     listAddNodeTail(clients,c);
+    
     /* Add the new key to the list of keys watched by this client */
+    // 将监视键添加到 redisClient.watched_keys 的尾部
     wk = zmalloc(sizeof(*wk));
     wk->key = key;
     wk->db = c->db;
@@ -257,22 +316,28 @@ void unwatchAllKeys(client *c) {
 }
 
 /* "Touch" a key, so that if this key is being WATCHed by some client the
- * next EXEC will fail. */
+ * next EXEC will fail. 
+ */
+//touchWatchedKey() 是标记某键值被修改的函数，它一般不被 signalModifyKey() 函数包装
+// 标记键值键值对的客户端为 REDIS_DIRTY_CAS，表示其所监视的数据已经被修改过
 void touchWatchedKey(redisDb *db, robj *key) {
     list *clients;
     listIter li;
     listNode *ln;
 
+    // 获取监视 key 的所有客户端
     if (dictSize(db->watched_keys) == 0) return;
     clients = dictFetchValue(db->watched_keys, key);
     if (!clients) return;
 
     /* Mark all the clients watching this key as CLIENT_DIRTY_CAS */
     /* Check if we are already watching for this key */
+    // 标记监视 key 的所有客户端 REDIS_DIRTY_CAS
     listRewind(clients,&li);
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
 
+        // REDIS_DIRTY_CAS 更改的时候会设置此标记
         c->flags |= CLIENT_DIRTY_CAS;
     }
 }
@@ -304,13 +369,17 @@ void touchWatchedKeysOnFlush(int dbid) {
     }
 }
 
+// WATCH 命令执行函数
 void watchCommand(client *c) {
     int j;
 
+    // WATCH 命令不能在 MULTI 和 EXEC 之间调用
     if (c->flags & CLIENT_MULTI) {
         addReplyError(c,"WATCH inside MULTI is not allowed");
         return;
     }
+
+    // 监视所给出的键
     for (j = 1; j < c->argc; j++)
         watchForKey(c,c->argv[j]);
     addReply(c,shared.ok);

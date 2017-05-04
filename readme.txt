@@ -1,7 +1,60 @@
+##################### 数据结构 begin ######################
 adlist.c
 adlist.h
 双端链表数据结构的实现
 
+dict.c、
+dict.h
+字典数据结构的实现
+
+intset.c、
+intset.h
+整数集合数据结构的实现，用于优化 SET 类型
+
+sds.c 、
+sds.h
+SDS 数据结构的实现，SDS 为 Redis 的默认字符串表示。
+
+lzf_c.c 、
+lzf_d.c 、
+lzf.h 、
+lzfP.h
+Redis 对字符串和 RDB 文件进行压缩时使用的 LZF 压缩算法的实现
+
+t_hash.c 、
+t_list.c 、
+t_set.c
+t_string.c 、
+t_zset.c
+定义了 Redis 的各种数据类型，以及这些数据类型的命令。
+
+ziplist.c 、
+ziplist.h
+ZIPLIST 数据结构的实现，用于优化 LIST 类型。
+
+zipmap.c 、
+zipmap.h
+ZIPMAP 数据结构的实现，在 Redis 2.6 以前用与优化 HASH 类型， Redis 2.6 开始已经废弃。
+
+以添加数据的一类命令 SET,HSET,LPUSH,SADD,ZADD 为例，分别看看哪个命令底层用了哪些数据结构。
+SET 命令底层所使用的即为 sds，或者整型数据类型 int,long long 等，或者浮点型 float，double。不同的情况所使用的数据类不同，SET 底层所使用的数据类型是最为简单的。
+
+HSET 命令底层所使用的即为压缩双链表 ziplist，而非哈希表 dict。
+
+LPUSH 命令底层所使用的即为压缩双链表 ziplist。
+
+SADD 命令情况较为特殊，SADD 所面向的是一个集合（set）。如果往集合总添加的数据都是整数，会采用整数集合 intset；如果集合中的数据有一个不为整数，
+会采用哈希表 dict。因此，会一个特殊的情况，假使前 N个数据都为整数，第 N+1个数据为非整数，如字符串，那么数据结构会从 intset 转换为 dict。
+
+ZADD 也较为特殊，ZADD 所面向的是一个有序集合（sorted set）。ZADD 底层数据结构可以采用跳表 skiplist 和哈希表 dict 的结合；也可以采用 ziplist。
+具体选用哪种需要看 server.zset_max_ziplist_entries 和 server.zset_max_ziplist_value 两个配置变量的设置。
+前者掺合 dict 是为了能快速查找某个成员是否存在于跳表中。有序集一个较为普遍的应用是排行榜。
+
+##################### 数据结构 end ######################
+
+
+
+##################### 网络 begin ######################
 ae.c
 ae.h、
 ae_epoll.c、
@@ -13,6 +66,10 @@ ae_select.c
 anet.c 、
 anet.h
 Redis的异步网络框架，内容主要为对socket库的包装
+
+##################### 网络 begin ######################
+
+
 
 aof.c
 AOF功能的实现
@@ -49,10 +106,6 @@ db.c
 debug.c
 调试实现
 
-dict.c、
-dict.h
-字典数据结构的实现
-
 endianconv.c、
 endianconv.h
 二进制的大端、小端转换函数
@@ -65,16 +118,6 @@ utils/generate-command-help.rb 程序自动生成的命令帮助信息
 
 hyperloglog.c
 HyperLogLog 数据结构的实现
-
-intset.c、
-intset.h
-整数集合数据结构的实现，用于优化 SET 类型
-
-lzf_c.c 、
-lzf_d.c 、
-lzf.h 、
-lzfP.h
-Redis 对字符串和 RDB 文件进行压缩时使用的 LZF 压缩算法的实现
 
 Makefile 、 Makefile.dep
 构建文件
@@ -148,10 +191,6 @@ Redis 对文件 I/O 函数的包装， 在普通 I/O 函数的基础上增加了
 scripting.c
 脚本功能的实现。
 
-sds.c 、
-sds.h
-SDS 数据结构的实现，SDS 为 Redis 的默认字符串表示。
-
 sentinel.c
 Redis Sentinel 的实现。
 
@@ -178,13 +217,6 @@ syncio.c
 testhelp.h
 测试辅助宏。
 
-t_hash.c 、
-t_list.c 、
-t_set.c
-t_string.c 、
-t_zset.c
-定义了 Redis 的各种数据类型，以及这些数据类型的命令。
-
 util.c 、
 util.h
 各种辅助函数。
@@ -194,14 +226,6 @@ valgrind 的suppression文件。
 
 version.h
 记录了 Redis 的版本号。
-
-ziplist.c 、
-ziplist.h
-ZIPLIST 数据结构的实现，用于优化 LIST 类型。
-
-zipmap.c 、
-zipmap.h
-ZIPMAP 数据结构的实现，在 Redis 2.6 以前用与优化 HASH 类型， Redis 2.6 开始已经废弃。
 
 zmalloc.c 、
 zmalloc.h

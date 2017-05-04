@@ -44,6 +44,10 @@
 /* Unused arguments generate annoying warnings... */
 #define DICT_NOTUSED(V) ((void) V)
 
+/*
+    
+*/
+
 typedef struct dictEntry {
     void *key;
     union {
@@ -73,11 +77,21 @@ typedef struct dictht {
     unsigned long used;
 } dictht;
 
+//哈希表（字典）数据结构，redis 的所有键值对都会存储在这里。其中包含两个哈希表。
 typedef struct dict {
+    // 哈希表的类型，包括哈希函数，比较函数，键值的内存释放函数
     dictType *type;
+
+    // 存储一些额外的数据
     void *privdata;
+
+    // 两个哈希表
     dictht ht[2];
+
+    // 哈希表重置下标，指定的是哈希数组的数组下标
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
+
+    // 绑定到哈希表的迭代器个数 ? 是不是上一次rehash执行到的位置
     int iterators; /* number of iterators currently running */
 } dict;
 

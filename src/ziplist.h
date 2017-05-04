@@ -34,6 +34,10 @@
 #define ZIPLIST_HEAD 0
 #define ZIPLIST_TAIL 1
 
+/*
+    ziplist，是一个压缩的双链表，实现了针对 CPU cache 的优化。ziplist 实际上一个字符串，通过一系列的算法来实现压缩双链表
+*/
+
 unsigned char *ziplistNew(void);
 unsigned char *ziplistMerge(unsigned char **first, unsigned char **second);
 unsigned char *ziplistPush(unsigned char *zl, unsigned char *s, unsigned int slen, int where);
