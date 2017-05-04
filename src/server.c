@@ -1887,6 +1887,8 @@ void initServer(void) {
     createSharedObjects();
     adjustOpenFilesLimit();
     server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
+    
+    // 分配数据集空间
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
     /* Open the TCP listening socket for the user commands. */
@@ -1912,10 +1914,16 @@ void initServer(void) {
         exit(1);
     }
 
-    /* Create the Redis databases, and initialize other internal state. */
-    for (j = 0; j < server.dbnum; j++) {
+    /* Create the Redis databases, and initialize other internal state.
+    */
+    // 初始化 redis 数据集
+    for (j = 0; j < server.dbnum; j++) { // 初始化多个数据库
+        // 哈希表，用于存储键值对
         server.db[j].dict = dictCreate(&dbDictType,NULL);
+        
+        // 哈希表，用于存储每个键的过期时间
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
+        
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
         server.db[j].ready_keys = dictCreate(&setDictType,NULL);
         server.db[j].watched_keys = dictCreate(&keylistDictType,NULL);

@@ -37,6 +37,7 @@
 
 /* Note that these encodings are ordered, so:
  * INTSET_ENC_INT16 < INTSET_ENC_INT32 < INTSET_ENC_INT64. */
+//encoding 能下面的三个值：分别是 16，32 和 64位整数
 #define INTSET_ENC_INT16 (sizeof(int16_t))
 #define INTSET_ENC_INT32 (sizeof(int32_t))
 #define INTSET_ENC_INT64 (sizeof(int64_t))
@@ -111,27 +112,33 @@ static intset *intsetResize(intset *is, uint32_t len) {
 /* Search for the position of "value". Return 1 when the value was found and
  * sets "pos" to the position of the value within the intset. Return 0 when
  * the value is not present in the intset and sets "pos" to the position
- * where "value" can be inserted. */
+ * where "value" can be inserted. 
+ */
+//intset 是有序的整数数组，可以用二分搜索查找
 static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
     int min = 0, max = intrev32ifbe(is->length)-1, mid = -1;
     int64_t cur = -1;
 
     /* The value can never be found when the set is empty */
+    // 集合为空
     if (intrev32ifbe(is->length) == 0) {
         if (pos) *pos = 0;
         return 0;
     } else {
         /* Check for the case where we know we cannot find the value,
          * but do know the insert position. */
+        // value 比最大元素还大
         if (value > _intsetGet(is,intrev32ifbe(is->length)-1)) {
             if (pos) *pos = intrev32ifbe(is->length);
             return 0;
         } else if (value < _intsetGet(is,0)) {
+            // value 比最小元素还小
             if (pos) *pos = 0;
             return 0;
         }
     }
 
+    // 二分查找
     while(max >= min) {
         mid = ((unsigned int)min + (unsigned int)max) >> 1;
         cur = _intsetGet(is,mid);
@@ -154,27 +161,36 @@ static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
 }
 
 /* Upgrades the intset to a larger encoding and inserts the given integer. */
+// 升级整数类型，譬如从 short->int。当插入数据的内存占用比原有数据大的时候，会被调用
 static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
     uint8_t curenc = intrev32ifbe(is->encoding);
     uint8_t newenc = _intsetValueEncoding(value);
     int length = intrev32ifbe(is->length);
+    
+    // value<0 头插，value>0 尾插
     int prepend = value < 0 ? 1 : 0;
 
     /* First set new encoding and resize */
+    // realloc
     is->encoding = intrev32ifbe(newenc);
     is = intsetResize(is,intrev32ifbe(is->length)+1);
 
     /* Upgrade back-to-front so we don't overwrite values.
      * Note that the "prepend" variable is used to make sure we have an empty
      * space at either the beginning or the end of the intset. */
+    // 逆向处理，防止数据被覆盖，一般的插入排序步骤
     while(length--)
         _intsetSet(is,length+prepend,_intsetGetEncoded(is,length,curenc));
 
     /* Set the value at the beginning or the end. */
+    // value<0 放在集合开头，否则放在集合末尾。
+    // 因为，此函数是对整数所占内存进行升级，意味着 value 不是在集合中最大就是最小！
     if (prepend)
         _intsetSet(is,0,value);
     else
         _intsetSet(is,intrev32ifbe(is->length),value);
+
+    // 更新 set size
     is->length = intrev32ifbe(intrev32ifbe(is->length)+1);
     return is;
 }
@@ -201,6 +217,7 @@ static void intsetMoveTail(intset *is, uint32_t from, uint32_t to) {
 }
 
 /* Insert an integer in the intset */
+//intset 实现中比较远有意思的是插入算法部分
 intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
     uint8_t valenc = _intsetValueEncoding(value);
     uint32_t pos;
@@ -209,23 +226,33 @@ intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
     /* Upgrade encoding if necessary. If we need to upgrade, we know that
      * this value should be either appended (if > 0) or prepended (if < 0),
      * because it lies outside the range of existing values. */
+    // 需要插入整数的所需内存超出了原有集合整数的范围，即内存类型不同，
+    // 则升级整数类型
     if (valenc > intrev32ifbe(is->encoding)) {
         /* This always succeeds, so we don't need to curry *success. */
         return intsetUpgradeAndAdd(is,value);
     } else {
+        // 正常，分配内存，插入
         /* Abort if the value is already present in the set.
          * This call will populate "pos" with the right position to insert
          * the value when it cannot be found. */
+        // intset 内部不允许重复
         if (intsetSearch(is,value,&pos)) {
             if (success) *success = 0;
             return is;
         }
 
+        // realloc
         is = intsetResize(is,intrev32ifbe(is->length)+1);
+
+        // 迁移内存，腾出空间给新的数据。intsetMoveTail() 完成内存迁移工作
         if (pos < intrev32ifbe(is->length)) intsetMoveTail(is,pos,pos+1);
     }
 
+    // 在腾出的空间中设置新的数据
     _intsetSet(is,pos,value);
+
+    // 更新 intset size
     is->length = intrev32ifbe(intrev32ifbe(is->length)+1);
     return is;
 }

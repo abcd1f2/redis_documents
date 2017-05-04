@@ -189,6 +189,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CMD_FAST 8192                 /* "F" flag */
 
 /* Object types */
+//数据类型，标记了 redis 对象绑定的是什么类型的数据
 #define OBJ_STRING 0
 #define OBJ_LIST 1
 #define OBJ_SET 2
@@ -197,7 +198,9 @@ typedef long long mstime_t; /* millisecond time type. */
 
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
  * internally represented in multiple ways. The 'encoding' field of the object
- * is set to one of this fields for this object. */
+ * is set to one of this fields for this object. 
+ */
+//存储编码方式，一个数据，可以以多种方式存储。譬如，数据类型为 REDIS_SET 的数据编码方式可能为 REDIS_ENCODING_HT，也可能为 REDIS_ENCODING_INTSET
 #define OBJ_ENCODING_RAW 0     /* Raw representation */
 #define OBJ_ENCODING_INT 1     /* Encoded as integer */
 #define OBJ_ENCODING_HT 2      /* Encoded as hash table */
@@ -462,6 +465,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #define LRU_CLOCK_RESOLUTION 1000 /* LRU clock resolution in ms */
 
 //任何 value 都会被包装成一个 redisObject，redisObject 能指定 value 的类型，编码方式等数据属性
+// 数据属性包括数据类型，存储编码方式，淘汰时钟，引用计数
 typedef struct redisObject {
     // 刚刚好 32 bits
     // 对象的类型，字符串/列表/集合/哈希表
@@ -664,24 +668,45 @@ struct sharedObjectsStruct {
     *bulkhdr[OBJ_SHARED_BULKHDR_LEN];  /* "$<value>\r\n" */
 };
 
-/* ZSETs use a specialized version of Skiplists */
+/* ZSETs use a specialized version of Skiplists
+*/
+/*
+    redis 中 zset 是一个有序非线性的数据结构,它底层核心的数据结构是跳表. 跳表（skiplist）是一个特俗的链表，
+    相比一般的链表，有更高的查找效率，其效率可比拟于二叉查找树
+*/
+// 跳表节点结构体
 typedef struct zskiplistNode {
+    // 节点数据
     robj *obj;
+    
+    // 分数，游戏分数？按游戏分数排序
     double score;
+
+    // 后驱指针
     struct zskiplistNode *backward;
+
+    // 后驱指针数组
     struct zskiplistLevel {
         struct zskiplistNode *forward;
+
+        // 调到下一个数据项需要走多少步
         unsigned int span;
     } level[];
 } zskiplistNode;
 
 typedef struct zskiplist {
+    // 跳表头尾指针
     struct zskiplistNode *header, *tail;
+
+    // 跳表的长度
     unsigned long length;
+
+    // 跳表的高度
     int level;
 } zskiplist;
 
 //是一个跳表，插入删除速度非常快。
+//redis 中结合跳表（skiplist）和哈希表（dict）形成一个新的数据结构 zset。添加 dict 是为了快速定位跳表中是否存在某个 member
 typedef struct zset {
     // 哈希表
     dict *dict;

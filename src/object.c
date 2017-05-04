@@ -36,6 +36,10 @@
 #define strtold(a,b) ((long double)strtod((a),(b)))
 #endif
 
+/*
+    得益于 redis 是单进程单线程工作的，所以增加/减少引用的操作不必保证原子性，这在 memcache 中是做不到的
+*/
+
 robj *createObject(int type, void *ptr) {
     robj *o = zmalloc(sizeof(*o));
     o->type = type;
@@ -294,13 +298,19 @@ void freeHashObject(robj *o) {
     }
 }
 
+// 增加 redis 对象引用
 void incrRefCount(robj *o) {
     o->refcount++;
 }
 
+// 减少 redis 对象引用。特别的，引用为零的时候会销毁对象
 void decrRefCount(robj *o) {
+
     if (o->refcount <= 0) serverPanic("decrRefCount against refcount <= 0");
+    
+    // 如果取消的是最后一个引用，则释放资源
     if (o->refcount == 1) {
+        // 不同数据类型，销毁操作不同
         switch(o->type) {
         case OBJ_STRING: freeStringObject(o); break;
         case OBJ_LIST: freeListObject(o); break;

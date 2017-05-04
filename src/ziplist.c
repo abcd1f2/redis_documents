@@ -940,6 +940,7 @@ unsigned int ziplistCompare(unsigned char *p, unsigned char *sstr, unsigned int 
 
 /* Find pointer to the entry equal to the specified entry. Skip 'skip' entries
  * between every comparison. Returns NULL when the field could not be found. */
+// 在 ziplist 中查找数据项
 unsigned char *ziplistFind(unsigned char *p, unsigned char *vstr, unsigned int vlen, unsigned int skip) {
     int skipcnt = 0;
     unsigned char vencoding = 0;
@@ -950,12 +951,19 @@ unsigned char *ziplistFind(unsigned char *p, unsigned char *vstr, unsigned int v
         unsigned char *q;
 
         ZIP_DECODE_PREVLENSIZE(p, prevlensize);
+
+        // 跳过前驱数据项大小，解析数据项大小
+        // len 为 data 大小
+        // lensize 为 len 所占内存大小
         ZIP_DECODE_LENGTH(p + prevlensize, encoding, lensize, len);
+
+        // q 指向 data
         q = p + prevlensize + lensize;
 
         if (skipcnt == 0) {
             /* Compare current entry with specified entry */
             if (ZIP_IS_STR(encoding)) {
+                // 字符串比较
                 if (len == vlen && memcmp(q, vstr, vlen) == 0) {
                     return p;
                 }
@@ -963,11 +971,14 @@ unsigned char *ziplistFind(unsigned char *p, unsigned char *vstr, unsigned int v
                 /* Find out if the searched field can be encoded. Note that
                  * we do it only the first time, once done vencoding is set
                  * to non-zero and vll is set to the integer value. */
+                // 整数比较
                 if (vencoding == 0) {
+                    // 尝试将 vstr 解析为整数
                     if (!zipTryEncoding(vstr, vlen, &vll, &vencoding)) {
                         /* If the entry can't be encoded we set it to
                          * UCHAR_MAX so that we don't retry again the next
                          * time. */
+                        // 不能编码为数字！！！会导致当前查找的数据项被跳过
                         vencoding = UCHAR_MAX;
                     }
                     /* Must be non-zero by now */
@@ -978,6 +989,7 @@ unsigned char *ziplistFind(unsigned char *p, unsigned char *vstr, unsigned int v
                  * if vencoding != UCHAR_MAX because if there is no encoding
                  * possible for the field it can't be a valid integer. */
                 if (vencoding != UCHAR_MAX) {
+                    // 读取整数
                     long long ll = zipLoadInteger(q, encoding);
                     if (ll == vll) {
                         return p;
@@ -993,9 +1005,11 @@ unsigned char *ziplistFind(unsigned char *p, unsigned char *vstr, unsigned int v
         }
 
         /* Move to next entry */
+        // 移动到 ziplist 的下一个数据项
         p = q + len;
     }
 
+    // 没有找到
     return NULL;
 }
 

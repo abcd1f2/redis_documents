@@ -241,9 +241,12 @@ int dictExpand(dict *d, unsigned long size)
  * since part of the hash table may be composed of empty spaces, it is not
  * guaranteed that this function will rehash even a single bucket, since it
  * will visit at max N*10 empty buckets in total, otherwise the amount of
- * work it does would be unbound and the function may block for a long time. */
+ * work it does would be unbound and the function may block for a long time.
+ */
+
 int dictRehash(dict *d, int n) {
     int empty_visits = n*10; /* Max number of empty buckets to visit. */
+    // 重置哈希表结束，直接返回
     if (!dictIsRehashing(d)) return 0;
 
     while(n-- && d->ht[0].used != 0) {
@@ -252,29 +255,45 @@ int dictRehash(dict *d, int n) {
         /* Note that rehashidx can't overflow as we are sure there are more
          * elements because ht[0].used != 0 */
         assert(d->ht[0].size > (unsigned long)d->rehashidx);
+
+        // 找到哈希表中不为空的位置
         while(d->ht[0].table[d->rehashidx] == NULL) {
             d->rehashidx++;
             if (--empty_visits == 0) return 1;
         }
+
         de = d->ht[0].table[d->rehashidx];
         /* Move all the keys in this bucket from the old to the new hash HT */
+        // 此位置的所有数据移动到第二个哈希表
         while(de) {
             unsigned int h;
 
             nextde = de->next;
             /* Get the index in the new hash table */
+            // 计算哈希值
             h = dictHashKey(d, de->key) & d->ht[1].sizemask;
+
+            // 头插法
             de->next = d->ht[1].table[h];
+
             d->ht[1].table[h] = de;
+
+            // 更新哈希表中的数据量
             d->ht[0].used--;
             d->ht[1].used++;
             de = nextde;
         }
+
+        // 置空
         d->ht[0].table[d->rehashidx] = NULL;
+
+        // 指向哈希表的下一个位置
         d->rehashidx++;
     }
 
     /* Check if we already rehashed the whole table... */
+    // 第一个哈希表为空，证明重置哈希表已经完成，将第二个哈希表赋值给第一个
+    // 结束
     if (d->ht[0].used == 0) {
         zfree(d->ht[0].table);
         d->ht[0] = d->ht[1];
@@ -575,11 +594,13 @@ dictIterator *dictGetSafeIterator(dict *d) {
     return i;
 }
 
+// 迭代器取下一个数据项的入口
 dictEntry *dictNext(dictIterator *iter)
 {
     while (1) {
         if (iter->entry == NULL) {
             dictht *ht = &iter->d->ht[iter->table];
+            // 新的迭代器
             if (iter->index == -1 && iter->table == 0) {
                 if (iter->safe)
                     iter->d->iterators++;
@@ -587,19 +608,30 @@ dictEntry *dictNext(dictIterator *iter)
                     iter->fingerprint = dictFingerprint(iter->d);
             }
             iter->index++;
+            // 下标超过了哈希表大小，不合法
             if (iter->index >= (long) ht->size) {
+                // 如果正在重置哈希表，redis 会尝试在第二个哈希表上进行迭代，
+                // 否则真的就不合法了
                 if (dictIsRehashing(iter->d) && iter->table == 0) {
+                    // 正在重置哈希表，证明数据正在从第一个哈希表整合到第二个哈希表，
+                    // 则指向第二个哈希表
                     iter->table++;
                     iter->index = 0;
                     ht = &iter->d->ht[1];
                 } else {
+                    // 否则迭代完毕，这是真正不合法的情况
                     break;
                 }
             }
+            // 取得数据项入口
             iter->entry = ht->table[iter->index];
         } else {
+            // 取得下一个数据项人口
             iter->entry = iter->nextEntry;
         }
+
+        // 迭代器会保存下一个数据项的入口，因为用户可能会删除此函数返回的数据项
+        // 入口，如此会导致迭代器失效，找不到下一个数据项入口
         if (iter->entry) {
             /* We need to save the 'next' here, the iterator user
              * may delete the entry we are returning. */

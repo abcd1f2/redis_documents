@@ -45,7 +45,27 @@
 #define DICT_NOTUSED(V) ((void) V)
 
 /*
-    
+    在 redis 中有多个数据集，数据集采用的数据结构是哈希表，用以存储键值对。默认所有的客户端都是使用第一个数据集，
+    如果客户端有需要可以使用 select 命令来选择不同的数据集。redis 在初始化服务器的时候就会初始化所有的数据集
+
+    redis 为每个数据集配备两个哈希表，能在不中断服务的情况下扩展哈希表。平时哈希表扩展的做法是，为新的哈希表另外开辟一个空间，
+    将原哈希表的数据重新计算哈希值，以移动到新哈希表。如果原哈希表数据过多，中间大量的计算过程会耗费大量时间
+
+    rehash:
+    redis 扩展哈希表的做法有点小聪明：为第二个哈希表分配新空间，其空间大小为原哈希表键值对数量的两倍（是的，没错），
+    接着逐步将第一个哈希表中的数据移动到第二个哈希表；待移动完毕后，将第二个哈希值赋值给第一个哈希表，第二个哈希表置空。
+    在这个过程中，数据会分布在两个哈希表，这时候就要求在 CURD 时，都要考虑两个哈希表
+
+
+    低效率的哈希表添加替换：
+        在 redis 添加替换的时候，都先要查看数据集中是否已经存在该键，也就是一个查找的过程，如果一个redis 命令导致过多的查找，
+        会导致效率低下。可能是为了扬长避短，即高读性能和低写性能，redis 中数据的添加和替换效率不高，特别是替换效率低的恶心
+
+        在 redis SET 命令的调用链中，添加键值对会导致了 2次的键值对查找；替换键值对最多会导致 4次的键值对查找。
+        在 dict 的实现中，dictFind() 和 _dictIndex() 都会导致键值对的查找，详细可以参看源码。所以，从源码来看，经常在 redis 上写不是一个明智的选择
+
+    在 RDB 和 AOF 持久化操作中，都需要迭代哈希表。哈希表的遍历本身难度不大，但因为每个数据集都有两个哈希表，
+    所以遍历哈希表的时候也需要注意遍历两个哈希表：第一个哈希表遍历完毕的时候，如果发现重置哈希表尚未结束，则需要继续遍历第二个哈希表
 */
 
 typedef struct dictEntry {
@@ -59,23 +79,42 @@ typedef struct dictEntry {
     struct dictEntry *next;
 } dictEntry;
 
+// 要存储多种多样的数据结构，势必不同的数据有不同的哈希算法，不同的键值比较算法，不同的析构函数。
 typedef struct dictType {
+    // 哈希函数
     unsigned int (*hashFunction)(const void *key);
+    
     void *(*keyDup)(void *privdata, const void *key);
     void *(*valDup)(void *privdata, const void *obj);
+    
+    // 比较函数
     int (*keyCompare)(void *privdata, const void *key1, const void *key2);
+    
+    // 键值析构函数
     void (*keyDestructor)(void *privdata, void *key);
     void (*valDestructor)(void *privdata, void *obj);
 } dictType;
 
+
 /* This is our hash table structure. Every dictionary has two of this as we
- * implement incremental rehashing, for the old to the new table. */
+ * implement incremental rehashing, for the old to the new table. 
+ */
+// 一般哈希表数据结构
 typedef struct dictht {
+    // 两个哈希表
     dictEntry **table;
+    
+    // 哈希表的大小
     unsigned long size;
+    
+    // 哈希表大小掩码
     unsigned long sizemask;
+    
+    // 哈希表中数据项数量
     unsigned long used;
 } dictht;
+
+
 
 //哈希表（字典）数据结构，redis 的所有键值对都会存储在这里。其中包含两个哈希表。
 typedef struct dict {

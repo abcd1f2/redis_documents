@@ -52,6 +52,16 @@
 #include "server.h"
 #include <math.h>
 
+/*
+    ZXX 命令是针对有序集合（sorted set）的
+
+    根据 zset_max_ziplist_entries 和 zset_max_ziplist_value 两个参数，
+    选用 zset 和 ziplist 其中之一作为基础数据结构，具体选用哪种，需要看实际场景，可按需配置。
+    我的建议是，如果数据集合不是非常大，采用 ziplist，因为这样可以利用 CPU 缓存的优势；其他还是选用 zset 吧
+
+
+*/
+
 static int zslLexValueGteMin(robj *value, zlexrangespec *spec);
 static int zslLexValueLteMax(robj *value, zlexrangespec *spec);
 
@@ -107,6 +117,7 @@ int zslRandomLevel(void) {
     return (level<ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
 }
 
+//redis 中跳表插入算法的具体实现
 zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj) {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
     unsigned int rank[ZSKIPLIST_MAXLEVEL];
@@ -114,9 +125,13 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj) {
 
     serverAssert(!isnan(score));
     x = zsl->header;
+
+    // 遍历 skiplist 中所有的层，找到数据将要插入的位置，并保存在 update 中
     for (i = zsl->level-1; i >= 0; i--) {
         /* store rank that is crossed to reach the insert position */
         rank[i] = i == (zsl->level-1) ? 0 : rank[i+1];
+
+        // 链表的搜索
         while (x->level[i].forward &&
             (x->level[i].forward->score < score ||
                 (x->level[i].forward->score == score &&
@@ -124,13 +139,19 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj) {
             rank[i] += x->level[i].span;
             x = x->level[i].forward;
         }
+
+        // update[i] 记录了新数据项的前驱
         update[i] = x;
     }
     /* we assume the key is not already inside, since we allow duplicated
      * scores, and the re-insertion of score and redis object should never
      * happen since the caller of zslInsert() should test in the hash table
-     * if the element is already inside or not. */
+     * if the element is already inside or not. 
+     */
+    // random 一个 level，是随机的
     level = zslRandomLevel();
+
+    // random level 比原有的 zsl->level 大，需要增加 skiplist 的 level
     if (level > zsl->level) {
         for (i = zsl->level; i < level; i++) {
             rank[i] = 0;
@@ -139,8 +160,11 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj) {
         }
         zsl->level = level;
     }
+
+    // 插入
     x = zslCreateNode(level,score,obj);
     for (i = 0; i < level; i++) {
+        // 新节点项插到 update[i] 的后面
         x->level[i].forward = update[i]->level[i].forward;
         update[i]->level[i].forward = x;
 
@@ -150,22 +174,30 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, robj *obj) {
     }
 
     /* increment span for untouched levels */
+    // 更高的 level 尚未调整 span
     for (i = level; i < zsl->level; i++) {
         update[i]->level[i].span++;
     }
 
+    // 调整新节点的前驱指针
     x->backward = (update[0] == zsl->header) ? NULL : update[0];
     if (x->level[0].forward)
         x->level[0].forward->backward = x;
     else
         zsl->tail = x;
+
+    // 调整 skiplist 的长度
     zsl->length++;
     return x;
 }
 
 /* Internal function used by zslDelete, zslDeleteByScore and zslDeleteByRank */
+//redis 中跳表删除算法的具体实现
+//x 是需要删除的节点  
+//update 是 每一个层 x 的前驱数组
 void zslDeleteNode(zskiplist *zsl, zskiplistNode *x, zskiplistNode **update) {
     int i;
+    // 调整 span 和 forward 指针
     for (i = 0; i < zsl->level; i++) {
         if (update[i]->level[i].forward == x) {
             update[i]->level[i].span += x->level[i].span - 1;
@@ -174,13 +206,19 @@ void zslDeleteNode(zskiplist *zsl, zskiplistNode *x, zskiplistNode **update) {
             update[i]->level[i].span -= 1;
         }
     }
+
+    // 调整后驱指针
     if (x->level[0].forward) {
         x->level[0].forward->backward = x->backward;
     } else {
         zsl->tail = x->backward;
     }
+
+    // 删除某一个节点后，层数 level 可能降低，调整 level
     while(zsl->level > 1 && zsl->header->level[zsl->level-1].forward == NULL)
         zsl->level--;
+
+    // 调整跳表的长度
     zsl->length--;
 }
 

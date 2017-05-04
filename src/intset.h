@@ -34,9 +34,12 @@
 
 /*
     intset，整数集合
+    intset 和 dict 都是 sadd 命令的底层数据结构，当添加的所有数据都是整数时，会使用前者；否则使用后者。
+    特别的，当遇到添加数据为字符串，即不能表示为整数时，redis 会把数据结构转换为 dict，即把 intset 中的数据全部搬迁到 dict
 */
 
 
+//intset 底层本质是一个有序的、不重复的、整型的数组，支持不同类型整数
 typedef struct intset {
     // 每个整数的类型
     uint32_t encoding;
