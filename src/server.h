@@ -928,6 +928,21 @@ struct redisServer {
     // 主从连接心跳频率
     int repl_ping_slave_period;     /* Master pings the slave every N seconds */
     
+    /*
+        积压空间中的数据变更记录是什么时候被写入的？在执行一个 redis 命令的时候，如果存在数据的修改（写），
+            那么就会把变更记录传播。redis 源码中是这么实现的：call()->propagate()->replicationFeedSlaves()
+
+        注释：命令真正执行的地方在 call() 中，call() 如果发现数据被修改（dirty），
+            则传播 propagrate()，replicationFeedSlaves() 将修改记录写入积压空间和所有已连接的从机
+
+        这里可能会有疑问：为什么把数据添加入积压空间，又把数据分发给所有的从机？为什么不仅仅将数据分发给所有从机呢？
+            因为有一些从机会因特殊情况（？？？）与主机断开连接，注意从机断开前有暂存主机的状态信息，
+            因此这些断开的从机就没有及时收到更新的数据。redis 为了让断开的从机在下次连接后能够获取更新数据，
+            将更新数据加入了积压空间。从 replicationFeedSlaves() 实现来看，在线的 slave 能马上收到数据更新记录；
+            因某些原因暂时断开连接的 slave，需要从积压空间中找回断开期间的数据更新记录。如果断开的时间足够长，
+            master 会拒绝 slave 的部分同步请求，从而 slave 只能进行全同步
+    */
+
     // 积压空间指针
     char *repl_backlog;             /* Replication backlog for partial syncs */
     
@@ -946,6 +961,7 @@ struct redisServer {
     // 积压空间有效时间
     time_t repl_backlog_time_limit; /* Time without slaves after the backlog
                                        gets released. */
+
     time_t repl_no_slaves_since;    /* We have no slaves since that time.
                                        Only valid if server.slaves len is 0. */
     int repl_min_slaves_to_write;   /* Min number of slaves to write. */

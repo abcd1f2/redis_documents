@@ -83,15 +83,17 @@ typedef struct dictEntry {
 typedef struct dictType {
     // 哈希函数
     unsigned int (*hashFunction)(const void *key);
-    
+    //复制key的函数
     void *(*keyDup)(void *privdata, const void *key);
+    //复制value的函数
     void *(*valDup)(void *privdata, const void *obj);
     
     // 比较函数
     int (*keyCompare)(void *privdata, const void *key1, const void *key2);
     
-    // 键值析构函数
+    //销毁key的析构函数
     void (*keyDestructor)(void *privdata, void *key);
+    //销毁val的析构函数
     void (*valDestructor)(void *privdata, void *obj);
 } dictType;
 
@@ -130,7 +132,7 @@ typedef struct dict {
     // 哈希表重置下标，指定的是哈希数组的数组下标
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
 
-    // 绑定到哈希表的迭代器个数 ? 是不是上一次rehash执行到的位置
+    // 绑定到哈希表的迭代器个数 ? 是不是上一次rehash执行到的位置 正在迭代的迭代器数量
     int iterators; /* number of iterators currently running */
 } dict;
 
@@ -138,12 +140,29 @@ typedef struct dict {
  * dictAdd, dictFind, and other functions against the dictionary even while
  * iterating. Otherwise it is a non safe iterator, and only dictNext()
  * should be called while iterating. */
+/*
+    迭代器分为安全迭代器和不安全迭代器：
+        1、非安全迭代器只能进行Get等读的操作, 而安全迭代器则可以进行iterator支持的任何操作。
+        2、由于dict结构中保存了safe iterators的数量，如果数量不为0， 是不能进行下一步的rehash的; 
+            因此安全迭代器的存在保证了遍历数据的准确性。
+        3、在非安全迭代器的迭代过程中, 会通过fingerprint方法来校验iterator在初始化与释放时字典的hash值是否一致; 
+            如果不一致说明迭代过程中发生了非法操作.
+*/
 typedef struct dictIterator {
+    //被迭代的字典
     dict *d;
+
+    //迭代器当前所指向的哈希表索引位置
     long index;
+
+    //table表示正迭代的哈希表号码，ht[0]或ht[1]。safe表示这个迭代器是否安全
     int table, safe;
+
+    //entry指向当前迭代的哈希表节点，nextEntry则指向当前节点的下一个节点
     dictEntry *entry, *nextEntry;
+
     /* unsafe iterator fingerprint for misuse detection. */
+    //避免不安全迭代器的指纹标记
     long long fingerprint;
 } dictIterator;
 
