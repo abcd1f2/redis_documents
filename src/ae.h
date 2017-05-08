@@ -79,6 +79,15 @@ typedef struct aeFileEvent {
 /* 
     Time event structure 
     时间事件结构体
+
+    Redis的时间事件可以分为以下两类：
+    （1）定时事件：让一段程序在指定的时间之后执行一次；
+    （2）周期性事件：让一段程序每隔指定的时间就执行一次。
+    
+    一个时间事件是定时事件还是周期性事件取决于时间事件处理器的返回值(ae.c/processTimeEvents/retval = te->timeProc(eventLoop, id, te->clientData))：
+        （1）如果事件处理器返回返回ae.h/AE_NOMORE,那么这个事件为定时事件，该事件在到达一次之后就会被删除。
+        （2）如果事件处理器返回一个非AE_NOMORE的整数值，那么这个事件为周期性事件，此时，服务器会对时间事件的when属性进行更新，
+            让该事件在一段时间之后再次到达，并以这种方式更新、运行
 */
 typedef struct aeTimeEvent {
     long long id; /* time event identifier. */
@@ -110,6 +119,10 @@ typedef struct aeFiredEvent {
 /* 
     State of an event based program 
     事件循环结构体
+
+    其中，events是aeFileEvent结构的数组，每个aeFileEvent结构表示一个注册的文件事件。setsize表示能处理的文件描述符的最大个数。
+    beforesleep函数指针表示在监控事件触发之前，需要调用的函数。apindata表示底层多路复用的私有数据，比如对于select来说，
+    该结构保存了读写描述符数组；对于epoll来说，该结构中保存了epoll描述符和epoll_event数组。
 */
 typedef struct aeEventLoop {
     int maxfd;   /* highest file descriptor currently registered */

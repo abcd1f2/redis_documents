@@ -353,6 +353,8 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
             id = te->id;
             retval = te->timeProc(eventLoop, id, te->clientData);
             processed++;
+            //如果事件处理器返回一个非AE_NOMORE的整数值，那么这个事件为周期性事件，此时，服务器会对时间事件的when属性进行更新，
+            //让该事件在一段时间之后再次到达，并以这种方式更新、运行
             if (retval != AE_NOMORE) {
                 aeAddMillisecondsToNow(retval,&te->when_sec,&te->when_ms);
             } else {
@@ -437,6 +439,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * to zero 
              */
             // 如果没有定时事件，见机行事
+            //没有时间事件，根据AE_DONT_WAIT来设置是否阻塞，以及阻塞的时间长度
             if (flags & AE_DONT_WAIT) {
                 tv.tv_sec = tv.tv_usec = 0;
                 tvp = &tv;

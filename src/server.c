@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
  * All rights reserved.
  *
@@ -1063,6 +1063,8 @@ void databasesCron(void) {
  * virtual memory and aging there is to store the current time in objects at
  * every object access, and accuracy is not needed. To access a global var is
  * a lot faster than calling time(NULL) */
+//time_t unixtime;    //秒级精度的系统当前UNIX时间戳
+//long long mstime;    //毫秒级精度的系统当前UNIX时间戳
 void updateCachedTime(void) {
     server.unixtime = time(NULL);
     server.mstime = mstime();
@@ -1087,6 +1089,21 @@ void updateCachedTime(void) {
  * a macro is used: run_with_period(milliseconds) { .... }
  */
 
+/*
+    Redis服务器中的serverCron函数默认每隔100（1000/server.hz）毫秒执行一次（第一次是1ms执行，后面是100ms），
+        该函数负责管理服务器的资源，并保持服务器自身的良好运转。
+    (1)更新服务器时间缓存
+        Redis服务器中有不少功能需要获取系统的当前时间，而每次获取系统的当前时间都需要执行一次时间调用，
+        为了减少系统调用的执行次数，服务器状态中的unixtime属性和mstime属性被当作当前时间的缓存，serverCron函数更新该域，这样就可以从这里获取时间
+        服务器只会在打印日志、更新服务器的LRU时钟、决定是否执行初始化任务、计算服务器上线时间这类对时间精度要求不高的功能上“使用unixtime和mstime属性”。
+        而对于为键设置过期时间、添加慢查询日志这种需要高精度时间的功能来说，服务器还是会再次执行系统调用，从而获得最准确的系统当前时间
+    (2)更新LRU时钟；
+    (3)更新内存使用峰值
+    (4)处理SIGTERM信号
+    (5)管理客户端资源
+    (6)管理数据库资源
+    (7)调度aof或rdb读写子进程，复制同步，集群同步，sentinel定时器等
+*/
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     int j;
     UNUSED(eventLoop);
@@ -1122,6 +1139,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     server.lruclock = getLRUClock();
 
     /* Record the max memory used since the server was started. */
+    //服务器状态中的stat_peak_memory属性记录了服务器的内存峰值大小
     if (zmalloc_used_memory() > server.stat_peak_memory)
         server.stat_peak_memory = zmalloc_used_memory();
 
@@ -1163,13 +1181,23 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* We need to do a few operations on clients asynchronously. */
+    /*
+        serverCron函数每次执行都会调用clientsCron函数，clientsCron函数会对一定数量的客户端进行一下两个检查：
+            a. 如果客户端与服务器之间连接已经超时（很长时间没有互动），那么程序释放这个客户端，关闭连接。
+            b. 如果客户端在上一次执行命令请求之后，输入缓冲区的大小超过了一定的长度，那么程序会释放客户端当前的输入缓冲区，
+                并重新创建一个默认大小的输入缓冲区，从而防止客户端的输入缓冲区耗费了过多的内存
+    */
     clientsCron();
 
     /* Handle background operations on Redis databases. */
+    /*
+        该函数会对服务器中的一部分数据库进行检查，删除其中的过期键，并在有需要时，对字典进行收缩操作
+    */
     databasesCron();
 
     /* Start a scheduled AOF rewrite if this was requested by the user while
      * a BGSAVE was in progress. */
+    //调度aof
     if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 &&
         server.aof_rewrite_scheduled)
     {
@@ -1177,6 +1205,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* Check if a background saving or AOF rewrite in progress terminated. */
+    //rdb读写子进程
     if (server.rdb_child_pid != -1 || server.aof_child_pid != -1 ||
         ldbPendingChildren())
     {
@@ -1269,20 +1298,23 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     /* Replication cron function -- used to reconnect to master,
      * detect transfer failures, start background RDB transfers and so forth. */
-    // Replicationcron�Ǹ��Ƶĵ�������
+    // Replicationcron是复制的调度中心，复制同步
     run_with_period(1000) replicationCron();
 
     /* Run the Redis Cluster cron. */
+    //集群同步
     run_with_period(100) {
         if (server.cluster_enabled) clusterCron();
     }
 
     /* Run the Sentinel timer if we are in sentinel mode. */
+    //sentinel定时器
     run_with_period(100) {
         if (server.sentinel_mode) sentinelTimer();
     }
 
     /* Cleanup expired MIGRATE cached sockets. */
+    //清理过期的集群中的连接
     run_with_period(1000) {
         migrateCloseTimedoutSockets();
     }
@@ -1294,13 +1326,11 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      * Note: this code must be after the replicationCron() call above so
      * make sure when refactoring this file to keep this order. This is useful
      * because we want to give priority to RDB savings for replication. */
-    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 &&
-        server.rdb_bgsave_scheduled &&
-        (server.unixtime-server.lastbgsave_try > CONFIG_BGSAVE_RETRY_DELAY ||
-         server.lastbgsave_status == C_OK))
-    {
-        if (rdbSaveBackground(server.rdb_filename) == C_OK)
+    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 && server.rdb_bgsave_scheduled &&
+        (server.unixtime-server.lastbgsave_try > CONFIG_BGSAVE_RETRY_DELAY || server.lastbgsave_status == C_OK)) {
+        if (rdbSaveBackground(server.rdb_filename) == C_OK) {
             server.rdb_bgsave_scheduled = 0;
+        }
     }
 
     server.cronloops++;
@@ -1450,7 +1480,9 @@ void createSharedObjects(void) {
 void initServerConfig(void) {
     int j;
 
+    //生产随机�?
     getRandomHexChars(server.runid,CONFIG_RUN_ID_SIZE);
+
     server.configfile = NULL;
     server.executable = NULL;
     server.hz = CONFIG_DEFAULT_HZ;
@@ -1858,6 +1890,7 @@ void resetServerStats(void) {
     server.aof_delayed_fsync = 0;
 }
 
+//前面的initServerConfig函数中主要负责初始化一般属性，而initServer函数主要负责初始化数据结�?
 void initServer(void) {
     int j;
 
@@ -1885,11 +1918,12 @@ void initServer(void) {
     server.clients_paused = 0;
     server.system_memory_size = zmalloc_get_memory_size();
 
+    //创建共享对象
     createSharedObjects();
     adjustOpenFilesLimit();
     server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
     
-    // �������ݼ��ռ�
+    // 分配数据集空间
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
     /* Open the TCP listening socket for the user commands. */
@@ -1917,12 +1951,12 @@ void initServer(void) {
 
     /* Create the Redis databases, and initialize other internal state.
     */
-    // ��ʼ�� redis ���ݼ�
-    for (j = 0; j < server.dbnum; j++) { // ��ʼ��������ݿ�
-        // ��ϣ�������ڴ洢��ֵ��
+    // 初始�?redis 数据�?
+    for (j = 0; j < server.dbnum; j++) { // 初始化多个数据库
+        // 哈希表，用于存储键值对
         server.db[j].dict = dictCreate(&dbDictType,NULL);
         
-        // ��ϣ�������ڴ洢ÿ�����Ĺ���ʱ��
+        // 哈希表，用于存储每个键的过期时间
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
         
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
@@ -1968,24 +2002,24 @@ void initServer(void) {
 
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
+    //为TCP连接关联连接处理器
     for (j = 0; j < server.ipfd_count; j++) {
-        if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
-            acceptTcpHandler,NULL) == AE_ERR)
-            {
-                serverPanic(
-                    "Unrecoverable error creating server.ipfd file event.");
+        if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE, acceptTcpHandler,NULL) == AE_ERR) {
+                serverPanic("Unrecoverable error creating server.ipfd file event.");
             }
     }
-    if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
-        acceptUnixHandler,NULL) == AE_ERR) serverPanic("Unrecoverable error creating server.sofd file event.");
+
+    //为本地套接字关联处理器
+    if (server.sofd > 0 && aeCreateFileEvent(server.el, server.sofd, AE_READABLE, acceptUnixHandler, NULL) == AE_ERR) {
+        serverPanic("Unrecoverable error creating server.sofd file event.");
+    }
 
     /* Open the AOF file if needed. */
+    //AOF文件
     if (server.aof_state == AOF_ON) {
-        server.aof_fd = open(server.aof_filename,
-                               O_WRONLY|O_APPEND|O_CREAT,0644);
+        server.aof_fd = open(server.aof_filename, O_WRONLY|O_APPEND|O_CREAT,0644);
         if (server.aof_fd == -1) {
-            serverLog(LL_WARNING, "Can't open the append-only file: %s",
-                strerror(errno));
+            serverLog(LL_WARNING, "Can't open the append-only file: %s", strerror(errno));
             exit(1);
         }
     }
@@ -2001,10 +2035,18 @@ void initServer(void) {
     }
 
     if (server.cluster_enabled) clusterInit();
+    
+    //初始化脚本系统
     replicationScriptCacheInit();
     scriptingInit(1);
+
+    //初始化慢查询功能
     slowlogInit();
+
+    //
     latencyMonitorInit();
+    
+    //
     bioInit();
 }
 
@@ -2138,16 +2180,16 @@ struct redisCommand *lookupCommandOrOriginal(sds name) {
  */
 
 /*
-    �� AOF �ʹӻ��������ݸ���
+    �?AOF 和从机发布数据更�?
 */
 void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc,
                int flags)
 {
-    // AOF ������Ҫ�򿪣������� AOF ������ǣ������·����������ļ�
+    // AOF 策略需要打开，且设置 AOF 传播标记，将更新发布给本地文�?
     if (server.aof_state != AOF_OFF && flags & PROPAGATE_AOF)
         feedAppendOnlyFile(cmd,dbid,argv,argc);
 
-    // �����˴ӻ�������ǣ������·������ӻ�
+    // 设置了从机传播标记，将更新发布给从机
     if (flags & PROPAGATE_REPL)
         replicationFeedSlaves(server.slaves,dbid,argv,argc);
 }
@@ -2243,7 +2285,7 @@ void preventCommandReplication(client *c) {
  *
  */
 
-// call() ������ִ������ĺ��ĺ���������ִ������ĵط�
+// call() 函数是执行命令的核心函数，真正执行命令的地方
 void call(client *c, int flags) {
     long long dirty, start, duration;
     int client_old_flags = c->flags;
@@ -2263,11 +2305,11 @@ void call(client *c, int flags) {
     redisOpArrayInit(&server.also_propagate);
 
     /* Call the command. */
-    // �����ݱ�ǣ������Ƿ��޸�
+    // 脏数据标记，数据是否被修�?
     dirty = server.dirty;
     start = ustime();
     
-    // ִ�������Ӧ�ĺ���
+    // 执行命令对应的函�?
     c->cmd->proc(c);
     duration = ustime()-start;
     dirty = server.dirty-dirty;
@@ -2301,7 +2343,7 @@ void call(client *c, int flags) {
         c->lastcmd->calls++;
     }
 
-    // ���ͻ�������������޸ļ�¼������ AOF �ʹӻ�
+    // 将客户端请求的数据修改记录传播给 AOF 和从�?
     /* Propagate the command into the AOF and replication link */
     if (flags & CMD_CALL_PROPAGATE &&
         (c->flags & CLIENT_PREVENT_PROP) != CLIENT_PREVENT_PROP)
@@ -2310,15 +2352,15 @@ void call(client *c, int flags) {
 
         /* Check if the command operated changes in the data set. If so
          * set for replication / AOF propagation. */
-        // ���ݱ��޸�
+        // 数据被修�?
         if (dirty) propagate_flags |= (PROPAGATE_AOF|PROPAGATE_REPL);
 
         /* If the client forced AOF / replication of the command, set
          * the flags regardless of the command effects on the data set. */
-        // ǿ�����Ӹ���
+        // 强制主从复制
         if (c->flags & CLIENT_FORCE_REPL) propagate_flags |= PROPAGATE_REPL;
 
-        // ǿ�� AOF �־û�
+        // 强制 AOF 持久�?
         if (c->flags & CLIENT_FORCE_AOF) propagate_flags |= PROPAGATE_AOF;
 
         /* However prevent AOF / replication propagation if the command
@@ -2333,7 +2375,7 @@ void call(client *c, int flags) {
 
         /* Call propagate() only if at least one of AOF / replication
          * propagation is needed. */
-        // ���������޸ļ�¼
+        // 传播数据修改记录
         if (propagate_flags != PROPAGATE_NONE)
             propagate(c->cmd,c->db->id,c->argv,c->argc,propagate_flags);
     }
@@ -2546,17 +2588,17 @@ int processCommand(client *c) {
     }
 
     /* Exec the command */
-    // ����������е����
+    // 加入命令队列的情�?
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
     {
-        // �������
+        // 命令入队
         queueMultiCommand(c);
         addReply(c,shared.queued);
     } else {
-        // ����ִ�����
-        // ע�⣬����������˶�����ģʽ����ô����ֱ��ִ������������������
+        // 真正执行命令�?
+        // 注意，如果是设置了多命令模式，那么不是直接执行命令，而是让命令入�?
         call(c,CMD_CALL_FULL);
         c->woff = server.master_repl_offset;
         if (listLength(server.ready_keys))
@@ -4010,6 +4052,8 @@ int main(int argc, char **argv) {
     gettimeofday(&tv,NULL);
     dictSetHashFunctionSeed(tv.tv_sec^tv.tv_usec^getpid());
     server.sentinel_mode = checkForSentinelMode(argc,argv);
+    
+    //initServerConfig函数初始化server状态时�?
     initServerConfig();
 
     /* Store the executable path and arguments in a safe place in order
@@ -4095,6 +4139,8 @@ int main(int argc, char **argv) {
             exit(1);
         }
         resetServerSaveParams();
+        
+        //载入配置文件，还有options
         loadServerConfig(configfile,options);
         sdsfree(options);
     } else {
@@ -4105,6 +4151,7 @@ int main(int argc, char **argv) {
     int background = server.daemonize && !server.supervised;
     if (background) daemonize();
 
+    //负责初始化数据结�?
     initServer();
     if (background || server.pidfile) createPidFile();
     redisSetProcTitle(argv[0]);
