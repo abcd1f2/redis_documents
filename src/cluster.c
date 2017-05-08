@@ -42,6 +42,45 @@
 #include <sys/file.h>
 #include <math.h>
 
+/*
+    在官方文档Cluster Spec中，作者详细介绍了Redis集群为什么要设计成现在的样子。最核心的目标有三个：    
+        1、性能：这是Redis赖以生存的看家本领，增加集群功能后当然不能对性能产生太大影响，所以Redis采取了P2P而非Proxy方式、
+            异步复制、客户端重定向等设计，而牺牲了部分的一致性、使用性。
+
+        2、水平扩展：集群的最重要能力当然是扩展，文档中称可以线性扩展到1000结点。
+
+        3、可用性：在Cluster推出之前，可用性要靠Sentinel保证。有了集群之后也自动具有了Sentinel的监控和自动Failover能力。
+
+    Redis Cluster功能涉及三个核心的数据结构clusterState、clusterNode、clusterLink都在cluster.h中定义。这三个数据结构中最重要的属性就是：
+    1、clusterState：集群状态
+        nodes：所有结点
+        migrating_slots_to：迁出中的槽
+        importing_slots_from：导入中的槽
+        slots_to_keys：槽中包含的所有Key，用于迁移Slot时获得其包含的Key
+        slots：Slot所属的结点，用于处理请求时判断Key所在Slot是否自己负责
+    
+    2、clusterNode：结点信息
+        slots：结点负责的所有Slot，用于发送Gossip消息通知其他结点自己负责的Slot。通过位图方式保存节省空间，
+            16384/8恰好是2048字节，所以槽总数16384不是随意定的。
+
+    3、clusterLink：与其他结点通信的连接
+
+    在单机模式下，Redis对请求的处理很简单。Key存在的话，就执行请求中的操作；Key不存在的话，就告诉客户端Key不存在。
+        然而在集群模式下，因为涉及到请求重定向和Slot迁移，所以对请求的处理变得很复杂，流程如下：
+            1、检查Key所在Slot是否属于当前Node？
+                2.1 计算crc16(key) % 16384得到Slot
+                2.2 查询clusterState.slots负责Slot的结点指针
+                2.3 与myself指针比较
+            2、若不属于，则响应MOVED错误重定向客户端
+            3、若属于且Key存在，则直接操作，返回结果给客户端
+            4、若Key不存在，检查该Slot是否迁出中？(clusterState.migrating_slots_to)
+            5、若Slot迁出中，返回ASK错误重定向客户端到迁移的目的服务器上
+            6、若Slot未迁出，检查Slot是否导入中？(clusterState.importing_slots_from)
+            7、若Slot导入中且有ASKING标记，则直接操作
+            8、否则响应MOVED错误重定向客户端
+
+*/
+
 /* A global reference to myself is handy to make code more clear.
  * Myself always points to server.cluster->myself, that is, the clusterNode
  * that represents this node. */

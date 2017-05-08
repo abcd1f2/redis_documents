@@ -40,7 +40,74 @@
 
 extern char **environ;
 
+//SENTINEL启动的端口
 #define REDIS_SENTINEL_PORT 26379
+
+/*
+    当前系统包括主服务器server1，从服务器server2、server3、server4和Sentinel监听系统，
+    假设某时刻server1进入下线状态，那么从服务器对主服务器的复制操作将中止，并且Sentinel系统会察觉到server1已下线，
+        并在server1的下线时长超过用户设定的上限时，Sentinel系统会执行故障转移操作：
+    （1）首先，Sentinel会挑选一个从服务器，将其升级为新的主服务器，这里涉及到选举算法；
+    （2）然后Sentienl向server1所有的从服务器发送新的复制指令，让它们成为新的主服务器的从服务器；
+    （3）Sentinel还会继续监视已下线的server1，并在它重新上线时，将它设置为新的服务器的从服务器。
+
+    1、获取主服务器信息：
+        Sentinel默认会以每十秒一次的频率，通过命令连接向被监视的主服务器发送INFO命令，并通过分析INFO命令的回复来获取主服务器的当前信息。
+        通过分析主服务器返回的INFO命令回复，Sentinel可以获取以下两方面的信息：
+        （1）主服务器本身的信息，包括服务器运行ID，服务器角色等；
+        （2）主服务器属下的所有从服务器信息。包括从服务器的IP地址、端口号等，根据这些信息，Sentinel无须用户提供从服务器的地址信息，就可以自动发现从服务器
+
+    2、获取从服务器信息：
+        当Sentinel发现主服务器有新的从服务器出现时，Sentinel除了会为这个新的从服务器创建相应的实例结构之外，
+            Sentinel还会创建连接到从服务器的命令连接和订阅连接。
+        在创建命令连接之后，Sentinel在默认情况下，会以每十秒一次的频率通过命令向从服务器发送INFO命令。并收到服务器信息的回复，
+            根据这些信息，对从服务器的实例结构进行更新
+
+    3、与所有主从服务器通信：
+        默认情况下，Sentinel会以每两秒一次的频率，通过命令连接向所有被监视的主服务器和从服务器发送命令。信息格式为：
+    
+        PUBLISH __sentinel__:hello <s_ip>,<s_port>,<s_runid>,<s_epoch>,<m_name>,<m_ip>,<m_port>,<m_epoch>
+    
+        其中，以s_开头的参数是Sentinel本身的信息。而m_开头的参数则是主服务器的信息。
+    
+        另外，当Sentinel与一个主服务器或者从服务器建立起订阅连接之后，Sentinel就会通过订阅连接，向服务器发送命令： 
+            SUBSCRIBE __sentinel__:hello，Sentinel会在其与服务器之间的连接断开前一直订阅该频道。
+    
+        因此，每个与Sentinel连接的服务器，Sentinel既通过命令连接向服务器的 __sentinel__:hello频道发送信息，
+            又通过订阅连接从服务器的__sentinel__:hello频道接收信息。
+    
+        比如，有sentinel1、sentinel2、sentinel3三个sentinel在监视同一个服务器，当sentinel
+        1向服务器的__sentinel__:hello频道发送一条信息时，所有订阅了该频道的sentine（包括自己）都会收到这条信息。
+            这些信息用于更新其他Sentinel对发送信息Sentinel的认知，也会被用于更新其他Sentinel对监视服务器的认知
+
+    4、选举领头Sentinel：
+        默认情况下，Sentinel会以每秒一次的频率向所有与它创建了命令连接的实例发送PING命令，并通过实例返回的PING命令回复来判断实例是否在线。
+
+        当Sentinel将一个主服务器判断为主观下线之后，为了确认这个主服务器是否真的下线，它会向同样监视这一主服务器的其他Sentinel进行询问。
+            当从其他Sentinel那里接收到足够数量的已下线判断之后，Sentinel就会将从服务器判定为客观下线，并对主服务器进行故障转移操作。
+        
+        当一个主服务器被判断为客观下线时，监视这个下线服务器的各个Sentinel会进行协商，选举出一个领头Sentinel，
+            并由领头Sentinel对下线主服务器执行故障转移操作（详细的选举算法这里不详述）。
+        
+        在选举出领头Sentinel之后，领头Sentinel将对已下线的主服务器执行文章开头所述的故障转移操作
+
+    每个Sentinel实例都执行的定时任务
+        1. 每个 Sentinel 以每秒钟一次的频率向它所知的主服务器、从服务器以及其他 Sentinel 实例发送一个 PING 命令。
+        
+        2. 如果一个实例（instance）距离最后一次有效回复 PING 命令的时间超过 down-after-milliseconds 选项所指定的值，
+            那么这个实例会被 Sentinel 标记为主观下线。 一个有效回复可以是： +PONG 、 -LOADING 或者 -MASTERDOWN 。
+        
+        3. 如果一个主服务器被标记为主观下线， 那么正在监视这个主服务器的所有 Sentinel 要以每秒一次的频率确认主服务器的确进入了主观下线状态。
+        
+        4. 如果一个主服务器被标记为主观下线， 并且有足够数量的 Sentinel （至少要达到配置文件指定的数量）在指定的时间范围内同意这一判断， 
+            那么这个主服务器被标记为客观下线。
+        
+        5. 在一般情况下， 每个 Sentinel 会以每 10 秒一次的频率向它已知的所有主服务器和从服务器发送 INFO 命令。 
+            当一个主服务器被 Sentinel 标记为客观下线时， Sentinel 向下线主服务器的所有从服务器发送 INFO 命令的频率会从 10 秒一次改为每秒一次。
+        
+        6. 当没有足够数量的 Sentinel 同意主服务器已经下线， 主服务器的客观下线状态就会被移除。 当主服务器重新向 Sentinel 
+            的 PING 命令返回有效回复时， 主服务器的主管下线状态就会被移除
+*/
 
 /* ======================== Sentinel global state =========================== */
 
@@ -161,11 +228,24 @@ typedef struct instanceLink {
 } instanceLink;
 
 typedef struct sentinelRedisInstance {
+    // 标识值，记录了实例的类型，以及该实例的当前状态
     int flags;      /* See SRI_... defines */
+
+    // 实例的名字
+    // 主服务器的名字由用户在配置文件中设置
+    // 从服务器以及 Sentinel 的名字由 Sentinel 自动设置
+    // 格式为 ip:port ，例如 "127.0.0.1:26379"
     char *name;     /* Master name from the point of view of this sentinel. */
+
+    // 实例的运行 ID
     char *runid;    /* Run ID of this instance, or unique ID if is a Sentinel.*/
+    
+    // 配置纪元，用于实现故障转移
     uint64_t config_epoch;  /* Configuration epoch. */
+    
+    // 实例的地址
     sentinelAddr *addr; /* Master host. */
+
     instanceLink *link; /* Link to the instance, may be shared for Sentinels. */
     mstime_t last_pub_time;   /* Last time we sent hello via Pub/Sub. */
     mstime_t last_hello_time; /* Only used if SRI_SENTINEL is set. Last time
@@ -175,6 +255,9 @@ typedef struct sentinelRedisInstance {
                                              SENTINEL is-master-down command. */
     mstime_t s_down_since_time; /* Subjectively down since time. */
     mstime_t o_down_since_time; /* Objectively down since time. */
+    
+    // SENTINEL down-after-milliseconds 选项设定的值
+    // 实例无响应多少毫秒之后才会被判断为主观下线（subjectively down）
     mstime_t down_after_period; /* Consider it down after that period. */
     mstime_t info_refresh;  /* Time at which we received INFO output from it. */
 
@@ -190,7 +273,13 @@ typedef struct sentinelRedisInstance {
     /* Master specific. */
     dict *sentinels;    /* Other sentinels monitoring the same master. */
     dict *slaves;       /* Slaves for this master instance. */
+    
+    // SENTINEL monitor <master-name> <IP> <port> <quorum> 选项中的 quorum 参数
+    // 判断这个实例为客观下线（objectively down）所需的支持投票数量
     unsigned int quorum;/* Number of sentinels that need to agree on failure. */
+    
+    // SENTINEL parallel-syncs <master-name> <number> 选项的值
+    // 在执行故障转移操作时，可以同时对新的主服务器进行同步的从服务器数量
     int parallel_syncs; /* How many slaves to reconfigure at same time. */
     char *auth_pass;    /* Password to use for AUTH against master & slaves. */
 
@@ -213,6 +302,9 @@ typedef struct sentinelRedisInstance {
     int failover_state; /* See SENTINEL_FAILOVER_STATE_* defines. */
     mstime_t failover_state_change_time;
     mstime_t failover_start_time;   /* Last failover attempt start time. */
+    
+    // SENTINEL failover-timeout <master-name> <ms> 选项的值
+    // 刷新故障迁移状态的最大时限
     mstime_t failover_timeout;      /* Max time to refresh failover state. */
     mstime_t failover_delay_logged; /* For what failover_start_time value we
                                        logged the failover delay. */
@@ -227,14 +319,30 @@ typedef struct sentinelRedisInstance {
 /* Main state. */
 struct sentinelState {
     char myid[CONFIG_RUN_ID_SIZE+1]; /* This sentinel ID. */
+    
+    // 当前纪元，用于实现故障转移
     uint64_t current_epoch;         /* Current epoch. */
+    
+    // 保存了所有被这个 sentinel 监视的主服务器
+    // 字典的键是主服务器的名字
+    // 字典的值则是一个指向 sentinelRedisInstance 结构的指针
     dict *masters;      /* Dictionary of master sentinelRedisInstances.
                            Key is the instance name, value is the
                            sentinelRedisInstance structure pointer. */
+    
+    // 是否进入了 TILT 模式？
     int tilt;           /* Are we in TILT mode? */
+    
+    // 目前正在执行的脚本的数量
     int running_scripts;    /* Number of scripts in execution right now. */
+    
+    // 进入 TILT 模式的时间
     mstime_t tilt_start_time;       /* When TITL started. */
+    
+    // 最后一次执行时间处理器的时间
     mstime_t previous_time;         /* Last time we ran the time handler. */
+    
+    // 一个 FIFO 队列，包含了所有需要执行的用户脚本
     list *scripts_queue;            /* Queue of user scripts to execute. */
     char *announce_ip;  /* IP addr that is gossiped to other sentinels if
                            not NULL. */
@@ -422,6 +530,17 @@ void sentinelSetCommand(client *c);
 void sentinelPublishCommand(client *c);
 void sentinelRoleCommand(client *c);
 
+
+/*
+Sentinel命令：
+    PING ：返回 PONG 。
+    SENTINEL masters ：列出所有被监视的主服务器，以及这些主服务器的当前状态；
+    SENTINEL slaves <master name> ：列出给定主服务器的所有从服务器，以及这些从服务器的当前状态；
+    SENTINEL get-master-addr-by-name <master name> ： 返回给定名字的主服务器的 IP 地址和端口号。 如果这个主服务器正在执行故障转移操作， 或者针对这个主服务器的故障转移操作已经完成， 那么这个                     命令返回新的主服务器的 IP 地址和端口号；
+    SENTINEL reset <pattern> ： 重置所有名字和给定模式 pattern 相匹配的主服务器。 pattern 参数是一个 Glob 风格的模式。 重置操作清楚主服务器目前的所有状态， 包括正在执行中的故障转移， 并移除目前已经发现和关联的， 主服务器的所有从服务器和 Sentinel ；
+    SENTINEL failover <master name> ： 当主服务器失效时， 在不询问其他 Sentinel 意见的情况下， 强制开始一次自动故障迁移。
+    客户端可以通过SENTINEL get-master-addr-by-name <master name>获取当前的主服务器IP地址和端口号，以及SENTINEL slaves <master name>获取所有的Slaves信息
+*/
 struct redisCommand sentinelcmds[] = {
     {"ping",pingCommand,1,"",0,NULL,0,0,0,0,0},
     {"sentinel",sentinelCommand,-2,"",0,NULL,0,0,0,0,0},

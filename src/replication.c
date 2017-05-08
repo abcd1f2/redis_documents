@@ -112,6 +112,25 @@
         propagate()进行命令传播(每次执行命令的时候调用propagate())
 */
 
+/*
+重点回顾：
+    1、Redis 2.8 以前的复制功能不能高效地处理断线后重复制情况， 但 Redis 2.8 新添加的部分重同步功能可以解决这个问题。
+
+    2、部分重同步通过复制偏移量、复制积压缓冲区、服务器运行 ID 三个部分来实现。
+
+    3、在复制操作刚开始的时候， 从服务器会成为主服务器的客户端， 并通过向主服务器发送命令请求来执行复制步骤， 
+        而在复制操作的后期， 主从服务器会互相成为对方的客户端。
+
+    4、主服务器通过向从服务器传播命令来更新从服务器的状态， 保持主从服务器一致， 
+        而从服务器则通过向主服务器发送命令来进行心跳检测， 以及命令丢失检测
+
+旧版本复制功能：
+    Redis 的复制功能分为同步（sync）和命令传播（command propagate）两个操作：
+
+    1、其中， 同步操作用于将从服务器的数据库状态更新至主服务器当前所处的数据库状态。
+    2、而命令传播操作则用于在主服务器的数据库状态被修改， 导致主从服务器的数据库状态出现不一致时， 让主从服务器的数据库重新回到一致状态。
+*/
+
 void replicationDiscardCachedMaster(void);
 void replicationResurrectCachedMaster(int newfd);
 void replicationSendAck(void);
@@ -385,6 +404,16 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     }
 }
 
+/*
+    1、客户端可以通过执行 MONITOR 命令， 将客户端转换成监视器， 接收并打印服务器处理的每个命令请求的相关信息。
+    
+    2、当一个客户端从普通客户端变为监视器时， 该客户端的 REDIS_MONITOR 标识会被打开。
+    
+    3、服务器将所有监视器都记录在 monitors 链表中。
+
+    4、每次处理命令请求时， 服务器都会遍历 monitors 链表， 将相关信息发送给监视器。
+*/
+
 /* 发送数据给monitor监听者 */
 void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv, int argc) {
     listNode *ln;
@@ -395,6 +424,8 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
     struct timeval tv;
 
     gettimeofday(&tv,NULL);
+
+    // 根据执行命令的客户端、当前数据库的号码、命令参数、命令参数个数等参数，创建要发送给各个监视器的信息
     cmdrepr = sdscatprintf(cmdrepr,"%ld.%06ld ",(long)tv.tv_sec,(long)tv.tv_usec);
     if (c->flags & CLIENT_LUA) {
         cmdrepr = sdscatprintf(cmdrepr,"[%d lua] ",dictid);
@@ -418,8 +449,11 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
     cmdobj = createObject(OBJ_STRING,cmdrepr);
 
     listRewind(monitors,&li);
+
+    // 遍历所有监视器
     while((ln = listNext(&li))) {
         client *monitor = ln->value;
+        // 将信息发送给监视器
         addReply(monitor,cmdobj);
     }
     decrRefCount(cmdobj);

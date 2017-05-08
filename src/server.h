@@ -517,10 +517,41 @@ struct evictionPoolEntry {
 
 /* Redis database representation. There are multiple databases identified
  * by integers from 0 (the default database) up to the max configured
- * database. The database number is the 'id' field in the structure. */
+ * database. The database number is the 'id' field in the structure. 
+ */
+/*
+    1、服务器中的每个数据库都由一个redisDb 结构表示
+    
+    2、数据库主要由 dict 和 expires 两个字典构成， 其中 dict 字典负责保存键值对， 而 expires 字典则负责保存键的过期时间
+    
+    3、因为数据库由字典构成， 所以对数据库的操作都是建立在字典操作之上的。
+
+    4、数据库的键总是一个字符串对象， 而值则可以是任意一种 Redis 对象类型， 包括字符串对象、哈希表对象、集合对象、
+        列表对象和有序集合对象， 分别对应字符串键、哈希表键、集合键、列表键和有序集合键
+
+    5、Redis 使用惰性删除和定期删除两种策略来删除过期的键： 惰性删除策略只在碰到过期键时才进行删除操作， 
+        定期删除策略则每隔一段时间， 主动查找并删除过期键
+
+    6、执行 SAVE 命令或者 BGSAVE 命令所产生的新 RDB 文件不会包含已经过期的键。
+        
+    7、执行 BGREWRITEAOF 命令所产生的重写 AOF 文件不会包含已经过期的键。
+        
+    8、当一个过期键被删除之后， 服务器会追加一条 DEL 命令到现有 AOF 文件的末尾， 显式地删除过期键
+
+    9、当主服务器删除一个过期键之后， 它会向所有从服务器发送一条 DEL 命令， 显式地删除过期键
+
+    10、从服务器即使发现过期键， 也不会自作主张地删除它， 而是等待主节点发来 DEL 命令，
+        这种统一、中心化的过期键删除策略可以保证主从服务器数据的一致性
+
+    11、当 Redis 命令对数据库进行修改之后， 服务器会根据配置， 向客户端发送数据库通知
+*/
 typedef struct redisDb {
+    // 数据库键空间，保存着数据库中的所有键值对
     dict *dict;                 /* The keyspace for this DB */
+
+    //expires 字典的键指向数据库中的某个键， 而值则记录了数据库键的过期时间， 过期时间是一个以毫秒为单位的 UNIX 时间戳
     dict *expires;              /* Timeout of keys with a timeout set */
+
     dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP) */
     dict *ready_keys;           /* Blocked keys that received a PUSH */
     dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
@@ -766,7 +797,10 @@ struct redisServer {
     char *executable;           /* Absolute executable file path. */
     char **exec_argv;           /* Executable argv vector (copy). */
     int hz;                     /* serverCron() calls frequency in hertz */
+
+    //服务器的所有数据库都保存的数组
     redisDb *db;
+    
     dict *commands;             /* Command table */
     dict *orig_commands;        /* Command table before command renaming. */
     aeEventLoop *el;
@@ -1105,9 +1139,15 @@ struct redisFunctionSym {
 };
 
 typedef struct _redisSortObject {
+    // 被排序键的值
     robj *obj;
+
+    // 权重
     union {
+        // 排序数字值时使用
         double score;
+
+        // 排序带有 BY 选项的字符串值时使用
         robj *cmpobj;
     } u;
 } redisSortObject;
